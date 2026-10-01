@@ -1658,7 +1658,7 @@ const CLAW_PRESETS = {
   bridge: {
     name: '橋渡しフィギュア', short: '橋渡し', base: 'pit', bridge: true,
     shell: { body: 0x2b2f3a, trim: 0xd9dde6, signSide: 0x111318, glow: 0x7ad7ff, hue: 0.55, sign: ['PRIZE FIGURE', '★ 橋渡し ★', '#2b2f3a', '#3a7bd5', '#2b2f3a'], panel: ['#14161c', '#262b36'], panelText: '箱をずらしてバーから落とせばGET！', backdrop: 'bridge' },
-    K: { N: 2, R0: 0.03, ARM: 0.17, TIP: 0.035, TIP_ANG: 70 * Math.PI / 180, OPEN: 0.62, REST: 0.05, CLOSED: 0.03, GRIP: 2.2, HOLD: 2.2, WEIGHT: 25.0, HOLD_R: 0.16, SLACK_T: 0.8, SLIP: 0.05, PHI0: Math.PI / 2 },
+    K: { N: 2, R0: 0.03, ARM: 0.17, TIP: 0.035, TIP_ANG: 70 * Math.PI / 180, OPEN: 0.62, REST: 0.05, CLOSED: 0.03, GRIP: 2.2, HOLD: 2.2, WEIGHT: 25.0, HOLD_R: 0.16, SLACK_T: 0.8, SLIP: 0.05, PHI0: Math.PI / 2, PRESS: true },
     home: { x: -0.33, z: 0.30 },
   },
   ufo2: {
@@ -1669,7 +1669,7 @@ const CLAW_PRESETS = {
   keychain: {
     name: 'マスコットいっぱい', short: 'マスコット', base: 'ufo',
     shell: { body: 0xffc93c, signSide: 0xe8590c, glow: 0xffe08a, hue: 0.14, sign: ['MINI MASCOT', '★ マスコットいっぱい ★', '#ffc93c', '#ff8a3d', '#ff5fa2'], panel: ['#5a3a08', '#7a4f0d'], panelText: 'ちいさなマスコットがいっぱい！' },
-    K: { R0: 0.022, ARM: 0.095, TIP: 0.035, HOLD: 0.28, GRIP: 1.6, HOLD_R: 0.07, HUB_R: 0.034 },
+    K: { R0: 0.022, ARM: 0.095, TIP: 0.035, HOLD: 0.28, GRIP: 1.6, HOLD_R: 0.07, HUB_R: 0.034, CLOSED: 0.14 },
     scale: 0.55,
   },
 };
@@ -2047,7 +2047,7 @@ class ClawMachine extends Machine {
             this.grip = K.GRIP; this.touching.clear(); this.touchPt.clear();
             this.S.clank();
             this.setState('grab');
-          } else if (this.landForce < K.WEIGHT) this.y -= K.DESC * h;   // 自重以上の反力があるあいだは押し付けたまま止まる
+          } else if (!K.PRESS || this.landForce < K.WEIGHT) this.y -= K.DESC * h;   // PRESS: 自重以上の反力があるあいだは押し付けたまま止まる
         }
         break;
       case 'grab': {
