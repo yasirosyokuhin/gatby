@@ -239,6 +239,7 @@ import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import { RectAreaLightUniformsLib } from 'three/addons/lights/RectAreaLightUniformsLib.js';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 
 // キャンバスに描く文字のためにフォントを先に読み込む
 try {
@@ -253,6 +254,7 @@ const EYE = ROOM_FLOOR + 1.55;         // 立ったときの目の高さ
 const PIT_Y = -0.30;                   // リングフック台の落下エリアの床
 const HOLE = { x0: -0.45, x1: -0.21, z0: 0.16, z1: 0.40 };   // クレーン台の取り出し穴
 const H = 1 / 240;                     // 物理ステップ
+const ACCEL = 1.2;                     // ガントリーの加減速 [m/s²]
 const G_STATIC = 1, G_CLAW = 2, G_PRIZE = 4;
 const FONT = '"M PLUS Rounded 1c", "Hiragino Sans", "Yu Gothic", sans-serif';
 const rnd = (a, b) => a + Math.random() * (b - a);
@@ -263,7 +265,9 @@ const pick = a => a[(Math.random() * a.length) | 0];
 // ============================================================
 const canvas = document.getElementById('c');
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: 'high-performance' });
-renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+const MAX_PR = Math.min(window.devicePixelRatio, 1.5);
+let pixelRatio = MAX_PR;
+renderer.setPixelRatio(pixelRatio);
 renderer.setSize(innerWidth, innerHeight);
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 0.95;
@@ -380,7 +384,7 @@ const plushBackdrop = canvasTex(1024, 1024, (g, w, h) => {
 
 // リングフック台の背面：店舗の有孔ボード + POP
 const pegBackdrop = canvasTex(1024, 1330, (g, w, h) => {
-  g.fillStyle = '#eef0ea'; g.fillRect(0, 0, w, h);
+  g.fillStyle = '#c9d2d4'; g.fillRect(0, 0, w, h);
   noise(g, w, h, 10);
   g.fillStyle = 'rgba(60,64,58,0.55)';
   for (let y = 18; y < h; y += 36) for (let x = 18; x < w; x += 36) { g.beginPath(); g.arc(x, y, 5, 0, 7); g.fill(); }
@@ -448,11 +452,11 @@ const M = {
   felt: new THREE.MeshStandardMaterial({ map: feltTex, roughness: 1, metalness: 0 }),
   pit: new THREE.MeshStandardMaterial({ map: pitTex, roughness: 0.95 }),
   glass: new THREE.MeshPhysicalMaterial({
-    color: 0xffffff, metalness: 0, roughness: 0.02, transmission: 1, thickness: 0.008, ior: 1.5,
-    specularIntensity: 1, envMapIntensity: 1.4, transparent: true,
+    color: 0xffffff, metalness: 0, roughness: 0.03, transparent: true, opacity: 0.08,
+    specularIntensity: 1, envMapIntensity: 1.6, depthWrite: false,
   }),
   acrylic: new THREE.MeshPhysicalMaterial({
-    color: 0xe8f6ff, metalness: 0, roughness: 0.08, transmission: 0.92, thickness: 0.006, ior: 1.49, transparent: true,
+    color: 0xe8f6ff, metalness: 0, roughness: 0.08, transparent: true, opacity: 0.28, envMapIntensity: 1.4, depthWrite: false,
   }),
   hookRed: new THREE.MeshPhysicalMaterial({ color: 0xd61f2c, roughness: 0.28, metalness: 0.2, clearcoat: 1, clearcoatRoughness: 0.1 }),
   ringYellow: new THREE.MeshPhysicalMaterial({ color: 0xffc81e, roughness: 0.3, clearcoat: 0.8, clearcoatRoughness: 0.15 }),
@@ -473,13 +477,15 @@ const M = {
   core: new THREE.MeshStandardMaterial({ color: 0xa47c52, roughness: 0.9 }),
 };
 
+const plushCache = new Map();
 function plushMat(color) {
-  const c = new THREE.Color(color);
-  return new THREE.MeshPhysicalMaterial({
+  const c = new THREE.Color(color), key = c.getHexString();
+  if (!plushCache.has(key)) plushCache.set(key, new THREE.MeshPhysicalMaterial({
     color: c, roughness: 0.92, metalness: 0,
     sheen: 1, sheenRoughness: 0.5, sheenColor: c.clone().lerp(new THREE.Color(0xffffff), 0.5),
     bumpMap: furBump, bumpScale: 2.2,
-  });
+  }));
+  return plushCache.get(key);
 }
 function paint(color) {
   return new THREE.MeshPhysicalMaterial({ color, roughness: 0.3, clearcoat: 1, clearcoatRoughness: 0.08 });
@@ -488,7 +494,7 @@ function paint(color) {
 // ============================================================
 // 形状ヘルパー
 // ============================================================
-const sphereGeo = new THREE.SphereGeometry(1, 40, 28);
+const sphereGeo = new THREE.SphereGeometry(1, 24, 16);
 function mesh(geo, mat, { cast = true, receive = true } = {}) {
   const m = new THREE.Mesh(geo, mat);
   m.castShadow = cast; m.receiveShadow = receive;
@@ -506,6 +512,30 @@ function boxMesh(x0, x1, y0, y1, z0, z1, mat, parent, { round = 0, cast = true, 
   m.position.set((x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2);
   parent.add(m);
   return m;
+}
+// 動かない部品を材質ごとに1つのメッシュへまとめて描画回数を減らす（keep 配下は残す）
+function mergeStatic(root, keep = []) {
+  root.updateMatrixWorld(true);
+  const inv = root.matrixWorld.clone().invert();
+  const buckets = new Map(), done = [];
+  root.traverse(o => {
+    if (!o.isMesh || Array.isArray(o.material)) return;
+    for (let p = o; p && p !== root; p = p.parent) if (keep.includes(p)) return;
+    const key = `${o.material.uuid}|${o.castShadow}|${o.receiveShadow}|${o.renderOrder}`;
+    const g = o.geometry.index ? o.geometry.toNonIndexed() : o.geometry.clone();
+    for (const name of Object.keys(g.attributes)) if (!['position', 'normal', 'uv'].includes(name)) g.deleteAttribute(name);
+    if (!g.attributes.uv || !g.attributes.normal) return;
+    g.applyMatrix4(inv.clone().multiply(o.matrixWorld));
+    if (!buckets.has(key)) buckets.set(key, { o, geos: [] });
+    buckets.get(key).geos.push(g);
+    done.push(o);
+  });
+  for (const o of done) o.parent.remove(o);
+  for (const { o, geos } of buckets.values()) {
+    const m = new THREE.Mesh(mergeGeometries(geos), o.material);
+    m.castShadow = o.castShadow; m.receiveShadow = o.receiveShadow; m.renderOrder = o.renderOrder;
+    root.add(m);
+  }
 }
 const v3 = (x, y, z) => new CANNON.Vec3(x, y, z);
 const at = (o, x, y, z) => { o.position.set(x, y, z); return o; };
@@ -901,7 +931,7 @@ const GOODS = {
     build() {
       const g = new THREE.Group();
       const color = pick([0xf2c230, 0x55c463, 0xff8a3d]);
-      const body = mesh(new RoundedBoxGeometry(0.05, 0.11, 0.04, 3, 0.012), new THREE.MeshPhysicalMaterial({ color, roughness: 0.15, transmission: 0.35, thickness: 0.03, clearcoat: 1 }));
+      const body = mesh(new RoundedBoxGeometry(0.05, 0.11, 0.04, 3, 0.012), new THREE.MeshPhysicalMaterial({ color, roughness: 0.15, transparent: true, opacity: 0.88, clearcoat: 1 }));
       body.position.y = -0.01; g.add(body);
       const cap = mesh(new THREE.CylinderGeometry(0.01, 0.013, 0.02, 20), new THREE.MeshPhysicalMaterial({ color: 0xffffff, roughness: 0.3 }));
       cap.position.y = 0.055; g.add(cap);
@@ -1006,7 +1036,7 @@ function buildShell(g, o) {
   const F = ROOM_FLOOR;
   const bodyMat = paint(o.body);
   const trimMat = o.trim ? paint(o.trim) : M.paintWhite;
-  const out = {};
+  const out = { keep: [] };
   const pit = o.base === 'pit';
   const glassY0 = pit ? PIT_Y : 0;
 
@@ -1123,6 +1153,7 @@ function buildShell(g, o) {
       const sideMat = new THREE.MeshPhysicalMaterial({ color, roughness: 0.2, clearcoat: 1, emissive: color, emissiveIntensity: 0.05 });
       const cap = mesh(new THREE.CylinderGeometry(0.027, 0.028, 0.018, 40), [sideMat, capMat, sideMat]);
       cap.position.y = 0.014; bg.add(cap);
+      out.keep.push(bg);
       return { cap, capMat, sideMat, baseY: 0.014 };
     };
     out.btn1 = mkButton(0.06, '→', '1', '#ff3b6b');
@@ -1134,11 +1165,11 @@ function buildShell(g, o) {
       map: canvasTex(256, 80, (c, w, h) => { c.fillStyle = '#c40'; c.fillRect(0, 0, w, h); c.fillStyle = '#fff'; c.font = `900 56px ${FONT}`; c.textAlign = 'center'; c.fillText('100円', w / 2, 60); }),
     }));
     coinLbl.rotation.x = -Math.PI / 2; coinLbl.position.set(0, 0.007, 0.034); coinG.add(coinLbl);
-    out.coinG = coinG;
+    out.coinG = coinG; out.keep.push(coinG);
     const dispCanvas = document.createElement('canvas'); dispCanvas.width = 256; dispCanvas.height = 96;
     const dispTex = new THREE.CanvasTexture(dispCanvas); dispTex.colorSpace = THREE.SRGBColorSpace;
     const disp = new THREE.Mesh(new THREE.PlaneGeometry(0.12, 0.045), new THREE.MeshBasicMaterial({ map: dispTex }));
-    disp.rotation.x = -Math.PI / 2; disp.position.set(-0.13, 0.021, -0.01); panel.add(disp);
+    disp.rotation.x = -Math.PI / 2; disp.position.set(-0.13, 0.021, -0.01); panel.add(disp); out.keep.push(disp);
     boxMesh(-0.196, -0.064, 0.016, 0.0205, -0.039, 0.019, M.blackGloss, panel);
     out.disp = { canvas: dispCanvas, tex: dispTex, last: '' };
   }
@@ -1157,11 +1188,6 @@ function buildShell(g, o) {
     });
     const ra = new THREE.RectAreaLight(0xfff3ea, 2.2, 0.82, 0.72);
     ra.position.set(0, 0.995, 0); ra.lookAt(0, 0, 0); g.add(ra);
-    const front = new THREE.PointLight(o.glow, 0.6, 1.5, 2);
-    front.position.set(0, 0.05, 0.75); g.add(front);
-  } else {
-    const p = new THREE.PointLight(0xfff0e8, 1.6, 1.6, 2);
-    p.position.set(0, 0.85, 0.1); g.add(p);
   }
   return out;
 }
@@ -1210,6 +1236,7 @@ class Machine {
     this.state = 'idle'; this.t = 0; this.awake = 0; this.acc = 0;
     this.x = o.home.x; this.z = o.home.z; this.vx = 0; this.vz = 0;
     this.shell = buildShell(this.group, o.shell);
+    mergeStatic(this.group, this.shell.keep);
     addObstacle(o.x - 0.53, o.x + 0.53, (o.z ?? 0) - 0.48, (o.z ?? 0) + 0.64);
     machines.push(this);
   }
@@ -1260,13 +1287,23 @@ class Machine {
     }
     return [tvx, tvz];
   }
-  // ホームへ戻る（奥行き → 横の順）。到着したら true
+  // ホームへ戻る（奥行き → 横の順）。止まる手前で減速する。到着したら true
   returnHome(h) {
     const dx = this.o.home.x - this.x, dz = this.o.home.z - this.z, s = this.o.speed;
-    if (Math.abs(dz) > 0.0005) return [0, Math.sign(dz) * Math.min(s, Math.abs(dz) / h), false];
-    if (Math.abs(dx) > 0.0005) return [Math.sign(dx) * Math.min(s, Math.abs(dx) / h), 0, false];
+    const sp = d => Math.min(s, Math.sqrt(2 * ACCEL * Math.abs(d)) + 0.004);
+    if (Math.abs(dz) > 0.001) return [0, Math.sign(dz) * sp(dz), false];
+    if (Math.abs(dx) > 0.001) return [Math.sign(dx) * sp(dx), 0, false];
+    if (Math.abs(this.vx) + Math.abs(this.vz) > 0.01) return [0, 0, false];
     this.x = this.o.home.x; this.z = this.o.home.z;
     return [0, 0, true];
+  }
+  // 目標速度へ加減速しながら動かす（急発進・急停止で景品が振り落とされないように）
+  moveGantry(tvx, tvz, h) {
+    const dv = ACCEL * h;
+    this.vx += Math.max(-dv, Math.min(dv, tvx - this.vx));
+    this.vz += Math.max(-dv, Math.min(dv, tvz - this.vz));
+    this.x = Math.min(this.o.range.xMax, Math.max(this.o.home.x - 0.005, this.x + this.vx * h));
+    this.z = Math.max(this.o.range.zMin, Math.min(this.o.home.z + 0.005, this.z + this.vz * h));
   }
   finishPlay() {
     if (this.inPlay && game.wins === this.winsAtPlay && active === this) { banner('ざんねん…', 'sad'); sfx.fail(); }
@@ -1289,6 +1326,7 @@ class Machine {
   }
   addPrize(kind, group, body) {
     group.traverse(o => { if (o.isMesh && o.material !== M.film) { o.castShadow = true; o.receiveShadow = true; } });
+    mergeStatic(group);
     this.group.add(group);
     this.world.addBody(body);
     const p = { kind, group, body, won: false };
@@ -1360,7 +1398,7 @@ class ClawMachine extends Machine {
   constructor(x) {
     super({
       name: 'クレーンパラダイス', short: 'ぬいぐるみ', x,
-      home: { x: -0.33, z: 0.28 }, range: { xMax: 0.33, zMin: -0.29 }, speed: 0.11,
+      home: { x: -0.33, z: 0.28 }, range: { xMax: 0.33, zMin: -0.29 }, speed: 0.2,
       dropHint: '離すとアームが下りるよ',
       shell: {
         base: 'ufo', body: 0xff3d8b, signSide: 0x5b2bd6, interactive: true, lights: true, glow: 0xff66cc, hue: 0,
@@ -1370,9 +1408,9 @@ class ClawMachine extends Machine {
       },
     });
     this.K = {
-      OPEN: 0.72, REST: 0.08, CLOSED: 0.02, CLOSE_RATE: 1.5,
+      OPEN: 0.72, REST: 0.08, CLOSED: 0.02, CLOSE_RATE: 2.0,
       R0: 0.032, HINGE_DY: -0.035, ARM: 0.13, TIP: 0.048, TIP_ANG: 50 * Math.PI / 180,
-      HUB_TOP: 0.80, DESC: 0.16, RISE: 0.13,
+      HUB_TOP: 0.80, DESC: 0.24, RISE: 0.2,
       GRIP: 3.0,         // アーム1本あたりの最大締め付け力 [N]
       WEIGHT: 4.0,       // アーム自重 [N]。これ以上の反力でケーブルがたるむ
       HOLD: 3.0,         // 景品を保持する最大の力 [N]（上昇後は weak 倍に弱まる）
@@ -1562,8 +1600,8 @@ class ClawMachine extends Machine {
     let [tvx, tvz] = this.moveXZ();
     switch (this.state) {
       case 'drop':
-        for (let i = 0; i < 3; i++) this.theta[i] = Math.min(K.OPEN, this.theta[i] + 1.3 * h);
-        if (this.t > 0.55) {
+        for (let i = 0; i < 3; i++) this.theta[i] = Math.min(K.OPEN, this.theta[i] + 2.4 * h);
+        if (this.t > 0.3) {
           this.slack = this.landForce > K.WEIGHT ? this.slack + h : Math.max(0, this.slack - h * 0.5);
           if (this.slack > 0.06 || this.tipLowestY() <= 0.006) {
             this.grip = K.GRIP; this.touching.clear();
@@ -1575,16 +1613,16 @@ class ClawMachine extends Machine {
       case 'grab': {
         this.squeeze(h);
         const settled = this.theta.every((th, i) => th <= K.CLOSED + 1e-4 || this.force[i] >= this.grip * 0.8);
-        if ((settled && this.t > 0.25) || this.t > 1.6) this.setState('hold');
+        if ((settled && this.t > 0.2) || this.t > 1.1) this.setState('hold');
         break;
       }
       case 'hold':
         this.squeeze(h);
-        if (this.t > 0.45) { this.tryHold(); this.setState('lift'); }
+        if (this.t > 0.3) { this.tryHold(); this.setState('lift'); }
         break;
       case 'lift':
         this.squeeze(h);
-        this.y += K.RISE * Math.min(1, this.t * 3) * h;
+        this.y += K.RISE * Math.min(1, this.t * 4) * h;
         if (this.y >= K.HUB_TOP) { this.y = K.HUB_TOP; this.S.clank(); this.setState('relax'); }
         break;
       case 'relax':
@@ -1592,7 +1630,7 @@ class ClawMachine extends Machine {
         this.grip = K.GRIP * (1 - (1 - this.weak) * Math.min(1, this.t / 0.3));
         if (this.held) this.setHoldForce(K.HOLD * this.held.quality * (this.grip / K.GRIP));
         this.squeeze(h);
-        if (this.t > 0.6) this.setState('return');
+        if (this.t > 0.4) this.setState('return');
         break;
       case 'return': {
         this.squeeze(h);
@@ -1602,18 +1640,18 @@ class ClawMachine extends Machine {
         break;
       }
       case 'release':
-        if (this.t > 0.3) { this.letGo(); for (let i = 0; i < 3; i++) this.theta[i] = Math.min(K.OPEN + 0.25, this.theta[i] + 2.2 * h); }
-        if (this.t > 1.8) this.setState('reset');
+        if (this.t > 0.2) { this.letGo(); for (let i = 0; i < 3; i++) this.theta[i] = Math.min(K.OPEN + 0.25, this.theta[i] + 3.0 * h); }
+        if (this.t > 1.2) this.setState('reset');
         break;
       case 'reset':
-        for (let i = 0; i < 3; i++) this.theta[i] += Math.sign(K.REST - this.theta[i]) * Math.min(Math.abs(K.REST - this.theta[i]), 1.6 * h);
-        if (this.t > 0.8) this.finishPlay();
+        for (let i = 0; i < 3; i++) this.theta[i] += Math.sign(K.REST - this.theta[i]) * Math.min(Math.abs(K.REST - this.theta[i]), 2.4 * h);
+        if (this.t > 0.5) this.finishPlay();
         break;
     }
     // 位置更新 + ケーブルの振り子の揺れ
-    const ax = (tvx - this.vx) / h, az = (tvz - this.vz) / h;
-    this.vx = tvx; this.vz = tvz;
-    this.x += tvx * h; this.z += tvz * h;
+    const vx0 = this.vx, vz0 = this.vz;
+    this.moveGantry(tvx, tvz, h);
+    const ax = (this.vx - vx0) / h, az = (this.vz - vz0) / h;
     const L = Math.max(0.08, 0.93 - this.y);
     const w2 = 9.82 / L, damp = 2 * 0.09 * Math.sqrt(w2), s = this.sway;
     s.vx += (-w2 * s.x - damp * s.vx - ax * 0.6) * h; s.vz += (-w2 * s.z - damp * s.vz - az * 0.6) * h;
@@ -1662,8 +1700,8 @@ class ClawMachine extends Machine {
     placeCable(this.gantry.cable, this.x, this.z, pose.hub.clone().add(new THREE.Vector3(0, 0.077, 0)));
   }
   motorLevel() {
-    const moving = Math.abs(this.vx) + Math.abs(this.vz) > 0 ? 1 : 0;
-    const vert = (this.state === 'drop' && this.t > 0.55) || this.state === 'lift' ? 1 : 0;
+    const moving = Math.min(1, (Math.abs(this.vx) + Math.abs(this.vz)) / 0.05);
+    const vert = (this.state === 'drop' && this.t > 0.3) || this.state === 'lift' ? 1 : 0;
     return [Math.max(moving, vert * 0.8), vert ? 1.5 : 1];
   }
 }
@@ -1679,9 +1717,9 @@ class RingHookMachine extends Machine {
   constructor(x) {
     super({
       name: '日用品リングフック', short: 'リングフック', x,
-      home: { x: -0.33, z: 0.30 }, range: { xMax: 0.33, zMin: -0.30 }, speed: 0.10,
+      home: { x: -0.33, z: 0.30 }, range: { xMax: 0.33, zMin: -0.30 }, speed: 0.18,
       dropHint: '離すとリングが下りるよ',
-      views: { front: [[0, 0.55, 1.7], [0, 0.26, 0]], side: [[0.55, 0.34, 0.85], [0, 0.18, -0.05]] },
+      views: { front: [[0, 0.56, 1.36], [0, 0.26, -0.03]], side: [[0.5, 0.5, 0.78], [-0.02, 0.24, -0.04]], top: [[0, 1.0, 0.82], [0, 0.12, -0.04]] },
       shell: {
         base: 'pit', body: 0x13a89e, trim: 0xf7f7f2, signSide: 0x0b6e8c, interactive: true, lights: true, glow: 0x3ee6ff, hue: 0.47, stripSat: 0.9,
         signTex: signTexture('RING HOOK', '★ 日用品リングフック ★', '#0fb5a5', '#2a9df4', '#1b4fd1'),
@@ -1690,7 +1728,7 @@ class RingHookMachine extends Machine {
       },
     });
     this.K = {
-      HEAD_TOP: 0.86, HEAD_DOWN: 0.395, DESC: 0.12, RISE: 0.09,
+      HEAD_TOP: 0.86, HEAD_DOWN: 0.395, DESC: 0.22, RISE: 0.16,
       LINKS: 6, LINK: 0.034, RING_R: 0.04, RING_T: 0.0045,
       LIFT_MAX: 7.0,     // 巻き上げモーターの限界 [N]。これを超えるとその場で止まる
       PLATE_Y: 0.10, PLATE: [0.20, 0.012, 0.15],
@@ -1759,6 +1797,7 @@ class RingHookMachine extends Machine {
       const base = mesh(new THREE.BoxGeometry(0.03, 0.008, 0.02), M.hookRed); base.position.set(0, pt / 2 + 0.004, hz); pv.add(base);
       // 蝶番の金具
       for (const s of [-1, 1]) { const hg = mesh(new THREE.CylinderGeometry(0.005, 0.005, 0.03, 12), M.chrome); hg.rotation.z = Math.PI / 2; hg.position.set(s * 0.06, 0, -pd / 2); pv.add(hg); }
+      mergeStatic(pv);
       g.add(pv);
       this.stations.push({ x, z, plate, vis: pv, prize: null });
     }
@@ -1852,7 +1891,7 @@ class RingHookMachine extends Machine {
         if (this.y <= K.HEAD_DOWN) { this.S.clank(); this.setState('wait'); }
         break;
       case 'wait':
-        if (this.t > 0.7) this.setState('lift');
+        if (this.t > 0.5) this.setState('lift');
         break;
       case 'lift':
         // 重すぎると巻き上げが止まる。しばらく止まったままなら諦めて戻る
@@ -1861,7 +1900,7 @@ class RingHookMachine extends Machine {
         if (this.y >= K.HEAD_TOP || this.stall > 1.5) { this.y = Math.min(this.y, K.HEAD_TOP); this.setState('top'); }
         break;
       case 'top':
-        if (this.t > 0.6) this.setState('return');
+        if (this.t > 0.3) this.setState('return');
         break;
       case 'return': {
         let done;
@@ -1871,11 +1910,10 @@ class RingHookMachine extends Machine {
       }
       case 'rest':
         this.y = Math.min(K.HEAD_TOP, this.y + K.RISE * h);
-        if (this.t > 1.2) this.finishPlay();
+        if (this.t > 0.6) this.finishPlay();
         break;
     }
-    this.vx = tvx; this.vz = tvz;
-    this.x += tvx * h; this.z += tvz * h;
+    this.moveGantry(tvx, tvz, h);
     this.setHead(h);
   }
   afterStep() {
@@ -1921,7 +1959,7 @@ class RingHookMachine extends Machine {
     this.ringVis.quaternion.set(rq.x, rq.y, rq.z, rq.w);
   }
   motorLevel() {
-    const moving = Math.abs(this.vx) + Math.abs(this.vz) > 0 ? 1 : 0;
+    const moving = Math.min(1, (Math.abs(this.vx) + Math.abs(this.vz)) / 0.05);
     const vert = this.state === 'drop' || (this.state === 'lift' && this.stall === 0) ? 1 : 0;
     return [Math.max(moving, vert * 0.8), vert ? 1.4 : 1.1];
   }
@@ -1934,6 +1972,14 @@ const clawMachine = new ClawMachine(0);
 const ringMachine = new RingHookMachine(1.25);
 
 // 飾りの筐体（遊べない）
+const decorMats = new Map();
+function decorMat(m) {
+  if (!decorMats.has(m.uuid)) {
+    const c = m.color ? m.color.clone() : new THREE.Color(0xffffff);
+    decorMats.set(m.uuid, new THREE.MeshStandardMaterial({ color: c, map: m.map ?? null, roughness: m.roughness ?? 0.8, emissive: c.clone().multiplyScalar(0.28), emissiveMap: m.map ?? null }));
+  }
+  return decorMats.get(m.uuid);
+}
 function decorCabinet(x, z, rotY, hue, label) {
   const g = new THREE.Group(); g.position.set(x, 0, z); g.rotation.y = rotY; scene.add(g);
   const body = new THREE.Color(0xff3d8b).offsetHSL(hue, 0, 0).getHex();
@@ -1947,8 +1993,11 @@ function decorCabinet(x, z, rotY, hue, label) {
     p.position.set(rnd(-0.36, 0.38), 0.05 + (i > 7 ? 0.08 : 0), rnd(-0.32, 0.3));
     p.rotation.set(rnd(-0.6, 0.6), rnd(0, 6.28), rnd(-0.6, 0.6));
     if (p.position.x < -0.16 && p.position.z > 0.1) p.position.x += 0.3;
+    // 飾りの台には照明を置かないので、軽いマテリアルで自ら少し光らせる
+    p.traverse(o => { if (o.isMesh) { o.castShadow = false; if (!Array.isArray(o.material)) o.material = decorMat(o.material); } });
     g.add(p);
   }
+  mergeStatic(g);
   const zMin = rotY === 0 ? z - 0.48 : z - 0.64, zMax = rotY === 0 ? z + 0.64 : z + 0.48;
   addObstacle(x - 0.53, x + 0.53, zMin, zMax);
 }
@@ -2196,7 +2245,7 @@ if (matchMedia('(pointer: coarse)').matches) document.body.classList.add('touch'
 // ============================================================
 const rt = new THREE.WebGLRenderTarget(innerWidth, innerHeight, { type: THREE.HalfFloatType, samples: 4 });
 const composer = new EffectComposer(renderer, rt);
-composer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+composer.setPixelRatio(pixelRatio);
 composer.addPass(new RenderPass(scene, camera));
 const bloom = new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 0.45, 0.35, 2.4);
 composer.addPass(bloom);
@@ -2253,8 +2302,26 @@ function animate(dt) {
   finish.uniforms.uTime.value = elapsed % 100;
 }
 
+// 重い端末では描画解像度を自動で下げる（軽ければ戻す）
+let frameMs = 16, scaleTimer = 0;
+function adaptResolution(dt) {
+  frameMs += (dt * 1000 - frameMs) * 0.05;
+  scaleTimer += dt;
+  if (scaleTimer < 1.5) return;
+  scaleTimer = 0;
+  let next = pixelRatio;
+  if (frameMs > 24 && pixelRatio > 0.6) next = Math.max(0.6, pixelRatio - 0.2);
+  else if (frameMs < 15 && pixelRatio < MAX_PR) next = Math.min(MAX_PR, pixelRatio + 0.1);
+  if (next !== pixelRatio) {
+    pixelRatio = next;
+    renderer.setPixelRatio(pixelRatio); composer.setPixelRatio(pixelRatio);
+    composer.setSize(innerWidth, innerHeight);
+  }
+}
+
 function frame() {
   const dt = Math.min(clock.getDelta(), 0.05);
+  adaptResolution(dt);
   for (const m of machines) m.advance(dt);
   if (mode === 'walk' && started) updateWalk(dt);
   else if (mode === 'play') controls.update();
