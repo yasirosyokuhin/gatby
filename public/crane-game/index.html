@@ -401,23 +401,27 @@ const plushBackdrop = canvasTex(1024, 1024, (g, w, h) => {
 });
 
 // リングフック台の背面：店舗の有孔ボード + POP
-const pegBackdrop = canvasTex(1024, 1330, (g, w, h) => {
-  g.fillStyle = '#c9d2d4'; g.fillRect(0, 0, w, h);
+function makePegBackdrop(title, sub, bg, accent) {
+  return canvasTex(1024, 1330, (g, w, h) => {
+  g.fillStyle = bg; g.fillRect(0, 0, w, h);
   noise(g, w, h, 10);
   g.fillStyle = 'rgba(60,64,58,0.55)';
   for (let y = 18; y < h; y += 36) for (let x = 18; x < w; x += 36) { g.beginPath(); g.arc(x, y, 5, 0, 7); g.fill(); }
   // POP
   g.save(); g.translate(w / 2, 250); g.rotate(-0.04);
   g.fillStyle = '#ffe14a'; g.fillRect(-380, -120, 760, 240);
-  g.strokeStyle = '#e03131'; g.lineWidth = 12; g.strokeRect(-380, -120, 760, 240);
-  g.fillStyle = '#e03131'; g.font = `900 92px ${FONT}`; g.textAlign = 'center';
-  g.fillText('日用品 GET!!', 0, -10);
+  g.strokeStyle = accent; g.lineWidth = 12; g.strokeRect(-380, -120, 760, 240);
+  g.fillStyle = accent; g.font = `900 92px ${FONT}`; g.textAlign = 'center';
+  g.fillText(title, 0, -10);
   g.fillStyle = '#222'; g.font = `800 46px ${FONT}`;
-  g.fillText('リングをフックにかけて板を持ち上げよう', 0, 75);
+  g.fillText(sub, 0, 75);
   g.restore();
-  g.fillStyle = '#e03131'; g.font = `900 54px ${FONT}`; g.textAlign = 'center';
+  g.fillStyle = accent; g.font = `900 54px ${FONT}`; g.textAlign = 'center';
   g.fillText('1プレイ 100円', w / 2, 470);
-});
+  });
+}
+const pegBackdrop = makePegBackdrop('日用品 GET!!', 'リングをフックにかけて板を持ち上げよう', '#c9d2d4', '#e03131');
+const vegBackdrop = makePegBackdrop('新鮮野菜 GET!!', '横にゆれるリングで左向きフックをねらえ', '#cfd8c2', '#2f8a2f');
 
 const pitTex = canvasTex(512, 512, (g, w, h) => {
   g.fillStyle = '#1d1f24'; g.fillRect(0, 0, w, h);
@@ -693,7 +697,7 @@ const noSfx = new Proxy({}, { get: () => () => {} });
 // ============================================================
 // 店内
 // ============================================================
-const ROOM = { x0: -3.0, x1: 2.6, z0: -1.1, z1: 4.0 };
+const ROOM = { x0: -3.0, x1: 3.85, z0: -1.1, z1: 4.0 };
 const obstacles = [];   // 歩行時の当たり判定（XZ平面の矩形）
 function addObstacle(x0, x1, z0, z1) { obstacles.push({ x0, x1, z0, z1 }); }
 {
@@ -714,7 +718,7 @@ function addObstacle(x0, x1, z0, z1) { obstacles.push({ x0, x1, z0, z1 }); }
   ceil.rotation.x = Math.PI / 2; ceil.position.set(cx, ROOM_FLOOR + wallH, cz);
   scene.add(ceil);
   const panelMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(0xfff2e0).multiplyScalar(4) });
-  for (const x of [-2.2, -0.6, 1.0]) for (const z of [0.9, 2.5]) {
+  for (const x of [-2.2, -0.6, 1.0, 2.6]) for (const z of [0.9, 2.5]) {
     const p = new THREE.Mesh(new THREE.PlaneGeometry(0.9, 0.25), panelMat);
     p.rotation.x = Math.PI / 2; p.position.set(x, ROOM_FLOOR + wallH - 0.01, z);
     scene.add(p);
@@ -1008,15 +1012,106 @@ const GOODS = {
     },
   },
 };
+// ---- 野菜 ----
+const vegMat = (color, map = null, rough = 0.75, bump = null) => new THREE.MeshStandardMaterial({ color, map, roughness: rough, bumpMap: bump, bumpScale: 1.2 });
+const melonTex = canvasTex(512, 256, (g, w, h) => {
+  g.fillStyle = '#93ad5c'; g.fillRect(0, 0, w, h);
+  noise(g, w, h, 30, [0.6, 1, 0.4]);
+  g.strokeStyle = 'rgba(236,236,205,0.9)'; g.lineCap = 'round';
+  for (let i = 0; i < 900; i++) {
+    const x = Math.random() * w, y = Math.random() * h, a = Math.random() * Math.PI * 2, l = 6 + Math.random() * 14;
+    g.lineWidth = 1 + Math.random() * 2.2;
+    g.beginPath(); g.moveTo(x, y); g.quadraticCurveTo(x + Math.cos(a + 0.6) * l * 0.6, y + Math.sin(a + 0.6) * l * 0.6, x + Math.cos(a) * l, y + Math.sin(a) * l); g.stroke();
+  }
+});
+function bagLabel(text, color) {
+  return new THREE.MeshStandardMaterial({ roughness: 0.5, map: canvasTex(512, 128, (c, w, h) => {
+    c.fillStyle = '#ffffff'; c.fillRect(0, 0, w, h); c.fillStyle = color; c.fillRect(0, 0, w, 26); c.fillRect(0, h - 18, w, 18);
+    wrapText(c, text, w / 2, 92, 52, color);
+  }) });
+}
+Object.assign(GOODS, {
+  melon: {
+    size: [0.13, 0.13, 0.13], mass: 0.45, angularDamping: 0.7,
+    build() {
+      const g = new THREE.Group();
+      const body = ball(0.062, vegMat(0xffffff, melonTex, 0.7), 0, 0.006, 0, 1, 0.96, 1); g.add(body);
+      const stem = mesh(new THREE.CylinderGeometry(0.004, 0.005, 0.02, 10), vegMat(0x7a6a3a)); stem.position.y = 0.072; g.add(stem);
+      const t = mesh(new THREE.CylinderGeometry(0.0035, 0.0035, 0.03, 8), vegMat(0x7a6a3a)); t.rotation.z = Math.PI / 2; t.position.y = 0.081; g.add(t);
+      const cushion = mesh(new THREE.TorusGeometry(0.036, 0.012, 10, 28), vegMat(0xf4f2ea, null, 0.95)); cushion.rotation.x = Math.PI / 2; cushion.position.y = -0.054; g.add(cushion);
+      return g;
+    },
+    shapes(b) { b.addShape(new CANNON.Sphere(0.062), v3(0, 0.006, 0)); b.addShape(new CANNON.Box(v3(0.04, 0.009, 0.04)), v3(0, -0.056, 0)); },
+  },
+  cabbage: {
+    size: [0.12, 0.11, 0.12], mass: 0.5, angularDamping: 0.7,
+    build() {
+      const g = new THREE.Group();
+      const leaf = new THREE.MeshStandardMaterial({ color: 0x9fcf6a, roughness: 0.55, side: THREE.DoubleSide, bumpMap: furBump, bumpScale: 0.4 });
+      g.add(ball(0.054, new THREE.MeshStandardMaterial({ color: 0xc8e69a, roughness: 0.5 }), 0, 0, 0, 1, 0.88, 1));
+      for (let i = 0; i < 5; i++) {
+        const l = mesh(new THREE.SphereGeometry(0.058, 20, 12, i * 1.3, 2.4, 0.5, 1.9), leaf);
+        l.rotation.set(rnd(-0.3, 0.3), 0, rnd(-0.3, 0.3)); l.scale.set(1, 0.9, 1); g.add(l);
+      }
+      return g;
+    },
+    shapes(b) { b.addShape(new CANNON.Sphere(0.055)); b.addShape(new CANNON.Box(v3(0.035, 0.008, 0.035)), v3(0, -0.047, 0)); },
+  },
+  onion: {
+    size: [0.14, 0.066, 0.07], mass: 0.33,
+    build() {
+      const g = new THREE.Group();
+      const skin = vegMat(0xc98a3c, null, 0.45);
+      for (const x of [-0.044, 0, 0.044]) {
+        g.add(ball(0.031, skin, x, -0.002, 0, 1, 0.88, 1));
+        const top = mesh(new THREE.ConeGeometry(0.008, 0.02, 10), vegMat(0x9a6a2e)); top.position.set(x, 0.033, 0); g.add(top);
+      }
+      const net = new THREE.MeshStandardMaterial({ color: 0xd8262c, roughness: 0.6, transparent: true, alphaTest: 0.5, side: THREE.DoubleSide,
+        alphaMap: canvasTex(128, 128, (c, w, h) => { c.fillStyle = '#000'; c.fillRect(0, 0, w, h); c.strokeStyle = '#fff'; c.lineWidth = 5; for (let i = -h; i < w; i += 22) { c.beginPath(); c.moveTo(i, 0); c.lineTo(i + h, h); c.moveTo(i + h, 0); c.lineTo(i, h); c.stroke(); } }, { srgb: false, repeat: [3, 2] }) });
+      g.add(mesh(new RoundedBoxGeometry(0.142, 0.068, 0.072, 3, 0.02), net, { cast: false }));
+      const tag = mesh(new THREE.PlaneGeometry(0.05, 0.022), bagLabel('玉ねぎ', '#d8262c')); tag.position.set(0, 0.012, 0.037); g.add(tag);
+      return g;
+    },
+  },
+  carrot: {
+    size: [0.16, 0.05, 0.07], mass: 0.26,
+    build() {
+      const g = new THREE.Group();
+      const orange = new THREE.MeshStandardMaterial({ color: 0xf07a18, roughness: 0.55, bumpMap: furBump, bumpScale: 0.6 });
+      const green = vegMat(0x4f9a2c, null, 0.6);
+      [-0.022, 0, 0.022].forEach((z, i) => {
+        const c = mesh(new THREE.ConeGeometry(0.016, 0.13, 18), orange); c.rotation.z = Math.PI / 2; c.position.set(-0.008, i === 1 ? 0.006 : -0.004, z); g.add(c);
+        const top = mesh(new THREE.CylinderGeometry(0.006, 0.01, 0.016, 10), green); top.rotation.z = Math.PI / 2; top.position.set(-0.08, i === 1 ? 0.006 : -0.004, z); g.add(top);
+      });
+      g.add(mesh(new RoundedBoxGeometry(0.162, 0.052, 0.072, 2, 0.012), M.film, { cast: false }));
+      const tag = mesh(new THREE.PlaneGeometry(0.06, 0.02), bagLabel('にんじん', '#e8590c')); tag.rotation.x = -Math.PI / 2; tag.position.set(0.02, 0.0265, 0); g.add(tag);
+      return g;
+    },
+  },
+  potato: {
+    size: [0.14, 0.07, 0.09], mass: 0.4,
+    build() {
+      const g = new THREE.Group();
+      const skin = new THREE.MeshStandardMaterial({ color: 0xb98e5a, roughness: 0.9, bumpMap: furBump, bumpScale: 1.4 });
+      for (const [x, y, z, s] of [[-0.04, -0.012, -0.02, 1], [0.0, -0.012, -0.02, 0.9], [0.042, -0.012, -0.018, 1.05], [-0.022, -0.01, 0.022, 0.95], [0.022, -0.01, 0.022, 1], [0, 0.02, 0, 0.9]]) {
+        const p = ball(0.024 * s, skin, x, y, z, 1.3, 0.85, 1); p.rotation.y = rnd(0, 3); g.add(p);
+      }
+      g.add(mesh(new RoundedBoxGeometry(0.142, 0.072, 0.092, 2, 0.02), M.film, { cast: false }));
+      const tag = mesh(new THREE.PlaneGeometry(0.06, 0.02), bagLabel('じゃがいも', '#8a5a2b')); tag.position.set(0, 0.01, 0.0465); g.add(tag);
+      return g;
+    },
+  },
+});
+
 function goodsBody(kind) {
   const def = GOODS[kind];
   const [w, h, d] = def.size;
   const b = new CANNON.Body({
     mass: def.mass, material: PM.goods,
     collisionFilterGroup: G_PRIZE, collisionFilterMask: G_STATIC | G_CLAW | G_PRIZE,
-    linearDamping: 0.04, angularDamping: 0.2,
+    linearDamping: 0.04, angularDamping: def.angularDamping ?? 0.2,
   });
-  b.addShape(new CANNON.Box(v3(w / 2, h / 2, d / 2)));
+  if (def.shapes) def.shapes(b); else b.addShape(new CANNON.Box(v3(w / 2, h / 2, d / 2)));
   return b;
 }
 
@@ -1750,7 +1845,7 @@ class ClawMachine extends Machine {
 // ============================================================
 // 「?」形フックの中心線（板の上面からの局所座標）。
 // 巻きは手前（+z）に向かって伸びる。正面を向いたリングが前後に揺れると、この腕がリングの穴を通る。
-function hookCurve() {
+function hookCurve(yaw = 0) {
   const pts = [];
   for (let i = 0; i <= 6; i++) pts.push(new THREE.Vector3(0, i * 0.005, 0));            // 立ち上がり
   const cz = 0.018, cy = 0.034, r = 0.018;
@@ -1758,13 +1853,16 @@ function hookCurve() {
     const a = Math.PI - (i / 16) * (Math.PI + Math.PI / 4);
     pts.push(new THREE.Vector3(0, cy + r * Math.sin(a), cz + r * Math.cos(a)));
   }
-  return pts;
+  // yaw だけ鉛直軸まわりに回す（0: 腕が手前向き、-π/2: 左向き）
+  const q = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), yaw);
+  return pts.map(p => p.applyQuaternion(q));
 }
 
 class RingHookMachine extends Machine {
-  constructor(x) {
+  constructor(x, opt = {}) {
+    const veg = opt.kind === 'veg';
     super({
-      name: '日用品リングフック', short: 'リングフック', x,
+      name: veg ? '野菜リングフック' : '日用品リングフック', short: veg ? '野菜フック' : 'リングフック', x,
       home: { x: -0.33, z: 0.30 }, range: { xMax: 0.33, zMin: -0.30 }, speed: 0.18,
       dropHint: '離すとリングが下りるよ',
       views: {
@@ -1773,13 +1871,21 @@ class RingHookMachine extends Machine {
         top: [[0, 0.92, 0.55], [0, 0.18, 0]],
         depth: [[0.68, 0.46, 0.0], [0, 0.42, 0.0]],
       },
-      shell: {
+      shell: veg ? {
+        base: 'pit', body: 0x3f9b3a, trim: 0xf7f7f2, signSide: 0x1f5e1f, interactive: true, lights: true, glow: 0x9cff6a, hue: 0.3, stripSat: 0.9,
+        signTex: signTexture('VEGE HOOK', '★ 野菜リングフック ★', '#3fae3a', '#f2a51a', '#e2532b'),
+        backdrop: vegBackdrop, panel: ['#1d4a1a', '#2f6b25'],
+        panelText: '左向きフック！リングを横にゆらしてかけよう',
+      } : {
         base: 'pit', body: 0x13a89e, trim: 0xf7f7f2, signSide: 0x0b6e8c, interactive: true, lights: true, glow: 0x3ee6ff, hue: 0.47, stripSat: 0.9,
         signTex: signTexture('RING HOOK', '★ 日用品リングフック ★', '#0fb5a5', '#2a9df4', '#1b4fd1'),
         backdrop: pegBackdrop, panel: ['#0b3d4a', '#145a6e'],
         panelText: 'リングをフックにかけて板を持ち上げるとGET！',
       },
     });
+    // フックの腕の向き（0: 手前、-π/2: 左）。リングは腕と同じ向きを向いて吊られる
+    this.hookYaw = veg ? -Math.PI / 2 : 0;
+    this.goodsKinds = veg ? ['melon', 'cabbage', 'onion', 'carrot', 'potato'] : ['tissue', 'toilet', 'kitchen', 'detergent', 'dish', 'toothpaste'];
     this.K = {
       HEAD_TOP: 0.78, HEAD_DOWN: 0.535, DESC: 0.22, RISE: 0.16,
       LINKS: 6, LINK: 0.034, RING_R: 0.05, RING_T: 0.0045,
@@ -1841,7 +1947,7 @@ class RingHookMachine extends Machine {
     // 板（動的）。中央に「?」形の金具フック
     this.board = new CANNON.Body({ mass: 0.22, material: PM.plate, collisionFilterGroup: G_PRIZE, collisionFilterMask: G_STATIC | G_CLAW | G_PRIZE, angularDamping: 0.4, linearDamping: 0.05 });
     this.board.addShape(new CANNON.Box(v3(bw / 2, bt / 2, bd / 2)));
-    const curve = hookCurve();
+    const curve = hookCurve(this.hookYaw);
     for (const p of curve) this.board.addShape(new CANNON.Sphere(0.0034), v3(p.x, bt / 2 + p.y, p.z));
     this.board.position.set(0, K.BOARD_Y, 0);
     // 中央のフックで吊られる板は水平のまま上下する（ガイドピンに挟まらないように回転させない）
@@ -1945,6 +2051,7 @@ class RingHookMachine extends Machine {
       this.ring.addShape(new CANNON.Box(v3(segHalf, K.RING_T, K.RING_T)), v3(R * Math.cos(a), R * Math.sin(a), 0), q);
     }
     this.ring.position.set(this.x, y + K.LINK / 2 - R, this.z);
+    this.ring.quaternion.setFromAxisAngle(v3(0, 1, 0), this.hookYaw);
     this.world.addBody(this.ring);
     this.world.addConstraint(new CANNON.PointToPointConstraint(this.links[K.LINKS - 1], v3(0, 0, 0), this.ring, v3(0, R + K.LINK / 2, 0)));
     this.ringVis = mesh(new THREE.TorusGeometry(R, K.RING_T, 14, 48), M.chrome);
@@ -1962,7 +2069,7 @@ class RingHookMachine extends Machine {
     // 取った景品は落下エリアに残す（多くなりすぎたら古いものから消す）
     const won = this.prizes.filter(p => p.won);
     while (won.length > 4) this.removePrize(won.shift());
-    const kind = pick(['tissue', 'toilet', 'kitchen', 'detergent', 'dish', 'toothpaste']);
+    const kind = pick(this.goodsKinds);
     const [w, h, d] = GOODS[kind].size;
     const body = goodsBody(kind);
     body.position.set(rnd(-0.01, 0.01), this.K.TRAY_Y + this.K.TRAY[1] / 2 + h / 2 + 0.001, -0.01);
@@ -2055,11 +2162,11 @@ class RingHookMachine extends Machine {
     this.rope();
     this.ringTwist();
   }
-  // チェーンのねじれ剛性: リングは正面を向こうとする（振り子の揺れは自由）
+  // チェーンのねじれ剛性: リングはフックの腕の向きを向こうとする（振り子の揺れは自由）
   ringTwist() {
     const r = this.ring, n = r.quaternion.vmult(v3(0, 0, 1));
     const k = 0.0006, c = 0.00004;
-    const err = Math.atan2(n.x, n.z);     // 鉛直軸まわりのずれ
+    const err = Math.atan2(n.x, n.z) - this.hookYaw;     // フックの腕の向きからのずれ
     const wrapped = Math.atan2(Math.sin(2 * err), Math.cos(2 * err)) / 2;   // 表裏どちら向きでもよい
     r.torque.y += -k * wrapped - c * r.angularVelocity.y;
   }
@@ -2128,6 +2235,7 @@ class RingHookMachine extends Machine {
 // ============================================================
 const clawMachine = new ClawMachine(0);
 const ringMachine = new RingHookMachine(1.25);
+const vegMachine = new RingHookMachine(2.5, { kind: 'veg' });
 
 // 飾りの筐体（遊べない）
 const decorMats = new Map();
