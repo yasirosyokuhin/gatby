@@ -43,7 +43,19 @@
   #stats .v.credit { color: var(--yellow); }
   #stats .v.get { color: var(--pink); }
 
-  #topRight { top: calc(16px + env(safe-area-inset-top, 0px)); right: 16px; display: flex; gap: 8px; pointer-events: auto; flex-wrap: wrap; justify-content: flex-end; }
+  #topRight { top: calc(16px + env(safe-area-inset-top, 0px)); right: 16px; display: flex; gap: 6px; pointer-events: auto; }
+  .ico {
+    width: 38px; height: 38px; padding: 0; display: grid; place-items: center; cursor: pointer;
+    color: var(--text); background: rgba(10, 8, 20, 0.42); border: 1px solid rgba(255,255,255,0.14);
+    border-radius: 50%; backdrop-filter: blur(6px); opacity: 0.8; transition: opacity .15s, background .15s;
+  }
+  .ico:hover { opacity: 1; border-color: rgba(255,255,255,0.35); }
+  .ico svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+  .ico[aria-pressed="true"] { color: #061018; background: var(--cyan); border-color: var(--cyan); opacity: 0.95; }
+  .ico:focus-visible { outline: 2px solid var(--cyan); outline-offset: 2px; }
+  #muteBtn .off { display: none; }
+  #muteBtn.muted .on { display: none; }
+  #muteBtn.muted .off { display: inline; }
   .chip {
     font: inherit; font-size: 13px; font-weight: 800; color: var(--text);
     background: var(--panel); border: 1px solid var(--panel-border);
@@ -166,8 +178,9 @@
     #stats { font-size: 12px; padding: 8px 10px; }
     .pbtn { width: 78px; height: 78px; font-size: 26px; }
     #coin { width: 78px; height: 56px; font-size: 13px; }
-    #topRight { top: auto; bottom: calc(112px + env(safe-area-inset-bottom, 0px)); right: 16px; flex-direction: column; align-items: flex-end; }
-    body.mode-walk #topRight { bottom: calc(24px + env(safe-area-inset-bottom, 0px)); }
+    #topRight { right: 10px; top: calc(10px + env(safe-area-inset-top, 0px)); gap: 5px; }
+    .ico { width: 34px; height: 34px; }
+    .ico svg { width: 18px; height: 18px; }
     #hint { top: auto; bottom: calc(112px + env(safe-area-inset-bottom, 0px)); left: 16px; transform: none; max-width: calc(100% - 150px); white-space: normal; border-radius: 14px; font-size: 13px; }
     body.mode-walk #hint { bottom: auto; top: calc(110px + env(safe-area-inset-top, 0px)); max-width: calc(100% - 32px); }
     #prompt { bottom: calc(170px + env(safe-area-inset-bottom, 0px)); font-size: 15px; }
@@ -193,10 +206,10 @@
   <span class="k">GET</span><span class="v get" id="sGet">0</span>
 </div>
 <div id="topRight" class="hud">
-  <button class="chip" id="leaveBtn" title="Esc キー">← 台をはなれる</button>
-  <button class="chip" id="viewBtn" title="V キー">視点: 正面</button>
-  <button class="chip" id="sideBtn" aria-pressed="true" title="②を押したとき真横から見る">横カメラ: ON</button>
-  <button class="chip" id="muteBtn" title="M キー" aria-label="ミュート切替">🔊</button>
+  <button class="ico" id="leaveBtn" title="台をはなれる（Esc）" aria-label="台をはなれる"><svg viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6"/><path d="M9 12h11"/><path d="M4 4v16"/></svg></button>
+  <button class="ico" id="viewBtn" title="視点: 正面（V）" aria-label="視点: 正面"><svg viewBox="0 0 24 24"><path d="M3 8h3l2-3h8l2 3h3v11H3z"/><circle cx="12" cy="13" r="3.5"/></svg></button>
+  <button class="ico" id="sideBtn" aria-pressed="true" title="横カメラ: ON（②で真横から見る）" aria-label="横カメラ"><svg viewBox="0 0 24 24"><rect x="2" y="7" width="13" height="10" rx="2"/><path d="M15 11l6-3v8l-6-3"/></svg></button>
+  <button class="ico" id="muteBtn" title="音（M）" aria-label="ミュート切替"><svg viewBox="0 0 24 24"><path d="M4 9h4l5-4v14l-5-4H4z"/><path class="on" d="M16.5 8.5a5 5 0 0 1 0 7M19 6a8.5 8.5 0 0 1 0 12"/><path class="off" d="M17 9l5 6M22 9l-5 6"/></svg></button>
 </div>
 <div id="hint" class="hud"></div>
 <div id="crosshair" class="hud"></div>
@@ -249,7 +262,6 @@ import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js'
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
-import { RectAreaLightUniformsLib } from 'three/addons/lights/RectAreaLightUniformsLib.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 
 // キャンバスに描く文字のためにフォントを先に読み込む
@@ -284,7 +296,6 @@ renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 0.9;
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-RectAreaLightUniformsLib.init();
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x07060c);
@@ -697,7 +708,7 @@ const noSfx = new Proxy({}, { get: () => () => {} });
 // ============================================================
 // 店内
 // ============================================================
-const ROOM = { x0: -3.0, x1: 3.85, z0: -1.1, z1: 4.0 };
+const ROOM = { x0: -3.25, x1: 3.85, z0: -1.1, z1: 4.0 };
 const obstacles = [];   // 歩行時の当たり判定（XZ平面の矩形）
 function addObstacle(x0, x1, z0, z1) { obstacles.push({ x0, x1, z0, z1 }); }
 {
@@ -857,24 +868,26 @@ const PLUSH_KINDS = {
   cat: () => (Math.random() < 0.5 ? catMesh('#f0a050', '#c8742c') : catMesh('#a3a3aa', '#6d6d75')),
   box: () => boxPrizeMesh((Math.random() * 360) | 0, pick(['ねこ太郎', 'もちまる', 'くまきち'])),
 };
-function plushBody(kind) {
+function plushBody(kind, s = 1) {
   const b = new CANNON.Body({
     mass: 0.12, material: kind === 'box' ? PM.box : PM.plush,
     collisionFilterGroup: G_PRIZE, collisionFilterMask: G_STATIC | G_CLAW | G_PRIZE,
     linearDamping: 0.05, angularDamping: 0.45,
   });
+  const c = BEAR_COM * s;
   if (kind === 'bear') {
-    b.addShape(new CANNON.Sphere(0.047), v3(0, -BEAR_COM, 0));
-    b.addShape(new CANNON.Sphere(0.04), v3(0, 0.072 - BEAR_COM, 0.004));
+    b.addShape(new CANNON.Sphere(0.047 * s), v3(0, -c, 0));
+    b.addShape(new CANNON.Sphere(0.04 * s), v3(0, 0.072 * s - c, 0.004 * s));
     b.mass = 0.13;
   } else if (kind === 'mochi') {
-    b.addShape(new CANNON.Sphere(0.05)); b.mass = 0.1;
+    b.addShape(new CANNON.Sphere(0.05 * s)); b.mass = 0.1;
   } else if (kind === 'cat') {
-    for (const x of [-0.06, -0.02, 0.02, 0.06]) b.addShape(new CANNON.Sphere(0.036), v3(x, 0, 0));
+    for (const x of [-0.06, -0.02, 0.02, 0.06]) b.addShape(new CANNON.Sphere(0.036 * s), v3(x * s, 0, 0));
     b.mass = 0.14;
   } else {
-    b.addShape(new CANNON.Box(v3(0.045, 0.06, 0.035))); b.mass = 0.17;
+    b.addShape(new CANNON.Box(v3(0.045 * s, 0.06 * s, 0.035 * s))); b.mass = 0.17;
   }
+  b.mass *= s ** 3;
   b.updateMassProperties();
   return b;
 }
@@ -1293,20 +1306,12 @@ function buildShell(g, o) {
     out.disp = { canvas: dispCanvas, tex: dispTex, last: '' };
   }
 
-  // 照明
+  // 照明（影を落とすライトは店内で1つだけ。遊んでいる/近くの台へ移す: shadowSpot）
   if (o.lights) {
-    [-0.2, 0.2].forEach((x, i) => {
-      const s = new THREE.SpotLight(0xfff3e6, 2.6, 2.6, 1.0, 0.75, 2);
-      s.position.set(x, 0.985, 0.05); s.target.position.set(x, 0, 0.0);
-      if (i === 0) {
-        s.castShadow = true; s.shadow.mapSize.set(1024, 1024);
-        s.shadow.camera.near = 0.1; s.shadow.camera.far = 1.8;
-        s.shadow.bias = -0.0004; s.shadow.normalBias = 0.004; s.shadow.radius = 4;
-      }
-      g.add(s, s.target);
-    });
-    const ra = new THREE.RectAreaLight(0xfff3ea, 1.3, 0.82, 0.72);
-    ra.position.set(0, 0.995, 0); ra.lookAt(0, 0, 0); g.add(ra);
+    const s = new THREE.SpotLight(0xfff3e6, 4.6, 2.6, 1.15, 0.8, 2);
+    s.position.set(0, 0.985, 0.05); s.target.position.set(0, 0, 0);
+    g.add(s, s.target);
+    out.spot = s;
   }
   return out;
 }
@@ -1347,6 +1352,7 @@ class Machine {
     this.name = o.name; this.short = o.short;
     this.group = new THREE.Group();
     this.group.position.set(o.x, 0, o.z ?? 0);
+    this.group.rotation.y = o.rotY ?? 0;
     scene.add(this.group);
     this.world = makeWorld();
     this.prizes = [];
@@ -1356,7 +1362,10 @@ class Machine {
     this.x = o.home.x; this.z = o.home.z; this.vx = 0; this.vz = 0;
     this.shell = buildShell(this.group, o.shell);
     mergeStatic(this.group, this.shell.keep);
-    addObstacle(o.x - 0.53, o.x + 0.53, (o.z ?? 0) - 0.48, (o.z ?? 0) + 0.64);
+    this.spot = this.shell.spot;
+    // 歩くときの当たり判定（操作パネルの出っ張りは台の向きに合わせる）
+    const z = o.z ?? 0, back = Math.abs(o.rotY ?? 0) > 1.5;
+    addObstacle(o.x - 0.53, o.x + 0.53, z - (back ? 0.64 : 0.48), z + (back ? 0.48 : 0.64));
     machines.push(this);
   }
   get S() { return active === this ? sfx : noSfx; }
@@ -1433,8 +1442,11 @@ class Machine {
     else { this.hint(this.idleHint()); refreshUI(); }
   }
   checkWins() {
+    let spilled = null;
     for (const p of this.prizes) {
       if (!p.won && this.isWin(p.body)) {
+        // 遊んでいないときに勝手に落ちた景品は、店員さんが台に戻す（GET にはならない）
+        if (!this.inPlay && this.spillBack) { (spilled ??= []).push(p); continue; }
         p.won = true;
         game.wins++;
         if (active === this) { banner('GET!!'); sfx.win(); winFlash = 3.0; }
@@ -1442,6 +1454,7 @@ class Machine {
       }
       if (p.body.position.y < -3 || Math.abs(p.body.position.x) > 2) { p.body.position.set(0, 0.5, 0); p.body.velocity.setZero(); }
     }
+    if (spilled) for (const p of spilled) this.spillBack(p);
   }
   addPrize(kind, group, body) {
     group.traverse(o => { if (o.isMesh && o.material !== M.film) { o.castShadow = true; o.receiveShadow = true; } });
@@ -1514,84 +1527,276 @@ class Machine {
 }
 
 // ============================================================
-// 台1: 3本爪のクレーンゲーム
+// 新しい景品の見た目
 // ============================================================
+// シマエナガ（白くて丸い小鳥）の大きなぬいぐるみ
+function shimaEnagaMesh() {
+  const g = new THREE.Group();
+  const white = plushMat('#f8f8f5'), dark = plushMat('#4a3f3a'), gray = plushMat('#b9b4ad');
+  g.add(ball(0.09, white, 0, 0, 0, 1.05, 0.95, 1));
+  for (const s of [-1, 1]) {
+    const wing = ball(0.05, dark, s * 0.075, -0.005, -0.025, 0.45, 0.8, 1.1); wing.rotation.y = s * 0.3; g.add(wing);
+    const wl = ball(0.04, gray, s * 0.083, -0.01, -0.005, 0.35, 0.7, 0.9); g.add(wl);
+    g.add(ball(0.0075, M.eye, s * 0.026, 0.025, 0.083));
+  }
+  const beak = mesh(new THREE.ConeGeometry(0.006, 0.012, 10), M.nose); beak.rotation.x = Math.PI / 2; beak.position.set(0, 0.012, 0.094); g.add(beak);
+  const tail = mesh(new RoundedBoxGeometry(0.03, 0.01, 0.12, 2, 0.004), dark); tail.position.set(0, 0.02, -0.13); tail.rotation.x = -0.35; g.add(tail);
+  for (const s of [-1, 1]) g.add(ball(0.012, gray, s * 0.03, -0.085, 0.02, 1, 0.5, 1.3));
+  return g;
+}
+// オリジナルの「ゆめかわうさぎ」（パステルカラーの大きなうさぎ）
+function yumeUsaMesh() {
+  const g = new THREE.Group();
+  const body = plushMat(pick(['#f6c9de', '#d9cdf6', '#bfe6f2'])), inner = plushMat('#ff9fc2'), white = plushMat('#fffaf6');
+  g.add(ball(0.08, body, 0, -0.03, 0, 1, 0.92, 0.95));
+  g.add(ball(0.066, body, 0, 0.075, 0.005));
+  for (const s of [-1, 1]) {
+    const ear = mesh(new THREE.CapsuleGeometry(0.016, 0.07, 8, 16), body); ear.position.set(s * 0.028, 0.16, -0.005); ear.rotation.z = -s * 0.18; ear.scale.set(1, 1, 0.55); g.add(ear);
+    const ei = mesh(new THREE.CapsuleGeometry(0.009, 0.055, 6, 12), inner); ei.position.set(s * 0.028, 0.16, 0.004); ei.rotation.z = -s * 0.18; ei.scale.set(1, 1, 0.3); g.add(ei);
+    g.add(ball(0.007, M.eye, s * 0.024, 0.082, 0.06));
+    const b = ball(0.012, M.blush, s * 0.042, 0.064, 0.05, 1, 0.6, 0.3); b.castShadow = false; g.add(b);
+    g.add(ball(0.02, white, s * 0.05, -0.085, 0.04, 1, 0.8, 1.2));
+  }
+  g.add(ball(0.013, white, 0, 0.062, 0.062, 1.2, 0.8, 0.7));
+  const bow = new THREE.MeshPhysicalMaterial({ color: 0xff5fa2, roughness: 0.35, sheen: 0.6, sheenColor: 0xffffff });
+  for (const s of [-1, 1]) { const r = ball(0.016, bow, 0.03 + s * 0.016, 0.135, 0.02, 1.1, 0.7, 0.45); r.rotation.z = s * 0.4; g.add(r); }
+  return g;
+}
+// ポテトチップスの袋（ふくらんだピロー形の袋）
+const CHIP_FLAVORS = [['うすしお', '#f7c51e', '#c0392b'], ['コンソメ', '#d6312b', '#ffd23f'], ['のりしお', '#2e9d46', '#ffffff'], ['しょうゆ', '#2b4fae', '#ffd23f']];
+function chipBagMesh(flavor) {
+  const [name, base, accent] = flavor;
+  const w = 0.12, h = 0.16, d = 0.036;
+  const geo = new THREE.BoxGeometry(w, h, d, 10, 12, 1);
+  const pos = geo.attributes.position;
+  for (let i = 0; i < pos.count; i++) {
+    const x = pos.getX(i) / (w / 2), y = pos.getY(i) / (h / 2), z = pos.getZ(i);
+    const f = (1 - Math.abs(x) ** 3) * (1 - Math.abs(y) ** 4);
+    pos.setZ(i, z * (0.12 + 0.88 * f));
+  }
+  geo.computeVertexNormals();
+  const tex = canvasTex(256, 340, (c, W, Hh) => {
+    c.fillStyle = base; c.fillRect(0, 0, W, Hh);
+    c.fillStyle = 'rgba(255,255,255,0.18)'; for (let i = 0; i < 14; i++) c.fillRect(0, i * 26, W, 6);
+    c.fillStyle = '#e8b65a'; c.beginPath(); c.ellipse(W / 2, 220, 70, 50, 0.3, 0, 7); c.fill();
+    c.fillStyle = '#d29a3f'; c.beginPath(); c.ellipse(W / 2 + 25, 235, 50, 36, -0.4, 0, 7); c.fill();
+    c.fillStyle = accent; c.font = `900 50px ${FONT}`; c.textAlign = 'center';
+    c.lineWidth = 8; c.strokeStyle = 'rgba(0,0,0,0.35)'; c.strokeText('POTE', W / 2, 70); c.fillText('POTE', W / 2, 70);
+    c.font = `900 34px ${FONT}`; c.strokeText('CHIPS', W / 2, 108); c.fillText('CHIPS', W / 2, 108);
+    c.fillStyle = '#fff'; c.font = `900 36px ${FONT}`; c.fillText(name, W / 2, 310);
+  });
+  const face = new THREE.MeshPhysicalMaterial({ map: tex, metalness: 0.5, roughness: 0.32, clearcoat: 0.6 });
+  const side = new THREE.MeshPhysicalMaterial({ color: base, metalness: 0.6, roughness: 0.3 });
+  const g = new THREE.Group();
+  g.add(mesh(geo, [side, side, side, side, face, face]));
+  return g;
+}
+function cupNoodleMesh() {
+  const g = new THREE.Group();
+  const tex = canvasTex(512, 160, (c, W, Hh) => {
+    c.fillStyle = '#ffffff'; c.fillRect(0, 0, W, Hh); c.fillStyle = '#d6312b'; c.fillRect(0, 0, W, 34); c.fillRect(0, Hh - 26, W, 26);
+    wrapText(c, 'カップめん しょうゆ', W / 2, 105, 46, '#d6312b');
+  });
+  g.add(mesh(new THREE.CylinderGeometry(0.046, 0.038, 0.09, 28, 1, true), new THREE.MeshStandardMaterial({ map: tex, roughness: 0.5, side: THREE.DoubleSide })));
+  const lid = mesh(new THREE.CylinderGeometry(0.047, 0.047, 0.004, 28), new THREE.MeshPhysicalMaterial({ color: 0xe8e8ee, metalness: 0.7, roughness: 0.3 })); lid.position.y = 0.046; g.add(lid);
+  const bottom = mesh(new THREE.CylinderGeometry(0.038, 0.038, 0.003, 24), M.paintWhite); bottom.position.y = -0.045; g.add(bottom);
+  return g;
+}
+// 箱入りフィギュア（橋渡し用。オリジナルの絵柄）
+function figureBoxMesh() {
+  const hue = (Math.random() * 360) | 0;
+  const face = canvasTex(360, 520, (c, W, Hh) => {
+    const gr = c.createLinearGradient(0, 0, W, Hh); gr.addColorStop(0, `hsl(${hue},70%,55%)`); gr.addColorStop(1, `hsl(${(hue + 60) % 360},70%,35%)`);
+    c.fillStyle = gr; c.fillRect(0, 0, W, Hh);
+    c.fillStyle = 'rgba(255,255,255,0.85)'; c.fillRect(30, 60, W - 60, Hh - 170);
+    c.fillStyle = `hsl(${hue},40%,25%)`;   // 人物のシルエット
+    c.beginPath(); c.arc(W / 2, 150, 46, 0, 7); c.fill();
+    c.beginPath(); c.moveTo(W / 2 - 70, 380); c.lineTo(W / 2 - 40, 210); c.lineTo(W / 2 + 40, 210); c.lineTo(W / 2 + 70, 380); c.fill();
+    c.fillStyle = '#fff'; c.font = `900 38px ${FONT}`; c.textAlign = 'center'; c.fillText('PREMIUM', W / 2, 44);
+    c.font = `900 44px ${FONT}`; c.fillText('FIGURE', W / 2, Hh - 66);
+    c.fillStyle = '#ffd400'; c.font = `900 26px ${FONT}`; c.fillText('プライズ限定', W / 2, Hh - 26);
+  });
+  const sideTex = canvasTex(160, 520, (c, W, Hh) => {
+    c.fillStyle = `hsl(${hue},70%,45%)`; c.fillRect(0, 0, W, Hh);
+    c.save(); c.translate(W / 2, Hh / 2); c.rotate(-Math.PI / 2); c.fillStyle = '#fff'; c.font = `900 40px ${FONT}`; c.textAlign = 'center'; c.fillText('PREMIUM FIGURE', 0, 14); c.restore();
+  });
+  const faceM = new THREE.MeshPhysicalMaterial({ map: face, roughness: 0.45, clearcoat: 1, clearcoatRoughness: 0.15 });
+  const sideM = new THREE.MeshPhysicalMaterial({ map: sideTex, roughness: 0.45, clearcoat: 1, clearcoatRoughness: 0.15 });
+  const topM = new THREE.MeshPhysicalMaterial({ color: new THREE.Color(`hsl(${hue},70%,45%)`), roughness: 0.45, clearcoat: 1 });
+  // 寝かせて置く: x=幅 0.16、y=厚み 0.10、z=長さ 0.24。表は上(+y)
+  const g = new THREE.Group();
+  g.add(mesh(new THREE.BoxGeometry(0.16, 0.10, 0.24), [sideM, sideM, faceM, topM, topM, topM]));
+  return g;
+}
+
+// ============================================================
+// クレーン台（3本爪/2本爪）。preset で台の種類を切り替える
+//  paradise: 定番のぬいぐるみ台      bigplush: 大きなぬいぐるみ1個の確率機
+//  taiwan:   台湾キャッチャー（つかんで投げる） bridge: 橋渡し（2本のバーの上の箱）
+//  ufo2:     2本爪のUFOキャッチャー型   keychain: 小さなマスコットの山盛り
+// ============================================================
+const CLAW_PRESETS = {
+  paradise: {
+    name: 'クレーンパラダイス', short: 'ぬいぐるみ', base: 'ufo',
+    shell: { body: 0xff3d8b, signSide: 0x5b2bd6, glow: 0xff66cc, hue: 0, sign: ['CLAW PARADISE', '★ クレーンパラダイス ★', '#ff2e88', '#ff7a3d', '#7a2cff'], panel: ['#2a1650', '#4d1a5e'], panelText: '①ボタン：よこ　②ボタン：おく　1回ずつしか押せません' },
+    K: {},
+  },
+  bigplush: {
+    name: 'でっかいぬいぐるみ', short: 'でっかい', base: 'ufo',
+    shell: { body: 0xffb3d1, signSide: 0x9b6bd6, glow: 0xffc8e6, hue: 0.92, sign: ['BIG FLUFFY', '★ でっかいぬいぐるみ ★', '#ffb3d1', '#c8a6ff', '#8fd3ff'], panel: ['#3a2350', '#5a2a66'], panelText: '確率機　ときどきアームが強くなるよ' },
+    K: { R0: 0.05, ARM: 0.2, TIP: 0.07, OPEN: 0.75, GRIP: 4.0, HOLD: 7.0, HOLD_R: 0.17, HUB_R: 0.062, WEIGHT: 5.0 },
+  },
+  taiwan: {
+    name: '台湾キャッチャー', short: '台湾', base: 'pit', frontDrop: true,
+    shell: { body: 0xe8452c, trim: 0xffd23f, signSide: 0x8a1a12, glow: 0xffb13d, hue: 0.08, sign: ['TAIWAN CATCHER', '★ 台湾キャッチャー ★', '#e8452c', '#ffb13d', '#e8452c'], panel: ['#4a1208', '#7a1d0d'], panelText: 'つかんで投げる！ 手前に落ちたらGET', backdrop: 'taiwan' },
+    K: { ARM: 0.15, TIP: 0.05, TILT: -0.22, HOLD: 3.0 },
+    home: { x: -0.3, z: 0.33 },
+  },
+  bridge: {
+    name: '橋渡しフィギュア', short: '橋渡し', base: 'pit', bridge: true,
+    shell: { body: 0x2b2f3a, trim: 0xd9dde6, signSide: 0x111318, glow: 0x7ad7ff, hue: 0.55, sign: ['PRIZE FIGURE', '★ 橋渡し ★', '#2b2f3a', '#3a7bd5', '#2b2f3a'], panel: ['#14161c', '#262b36'], panelText: '箱をバーの間に落とせばGET！', backdrop: 'bridge' },
+    K: { N: 2, R0: 0.03, ARM: 0.17, TIP: 0.035, TIP_ANG: 70 * Math.PI / 180, OPEN: 0.62, REST: 0.05, CLOSED: 0.03, GRIP: 2.2, HOLD: 1.2, WEIGHT: 9.0, HOLD_R: 0.12 },
+    home: { x: -0.33, z: 0.30 },
+  },
+  ufo2: {
+    name: 'ツインアームUFO', short: '2本爪', base: 'ufo',
+    shell: { body: 0x2f9bff, signSide: 0x1b4fd1, glow: 0x8fd3ff, hue: 0.6, sign: ['TWIN ARM UFO', '★ 2本爪キャッチャー ★', '#2f9bff', '#7a5cff', '#2f9bff'], panel: ['#0e2550', '#1b3a7a'], panelText: '2本のアームではさんで持ち上げよう' },
+    K: { N: 2, R0: 0.03, ARM: 0.15, TIP: 0.05, TIP_ANG: 60 * Math.PI / 180, OPEN: 0.7, CLOSED: 0.03, HOLD: 2.6 },
+  },
+  keychain: {
+    name: 'マスコットいっぱい', short: 'マスコット', base: 'ufo',
+    shell: { body: 0xffc93c, signSide: 0xe8590c, glow: 0xffe08a, hue: 0.14, sign: ['MINI MASCOT', '★ マスコットいっぱい ★', '#ffc93c', '#ff8a3d', '#ff5fa2'], panel: ['#5a3a08', '#7a4f0d'], panelText: 'ちいさなマスコットがいっぱい！' },
+    K: { R0: 0.022, ARM: 0.095, TIP: 0.035, HOLD: 0.5, GRIP: 1.6, HOLD_R: 0.07, HUB_R: 0.034 },
+    scale: 0.55,
+  },
+};
+const BRIDGE = { Y: 0.14, Z: 0.075, R: 0.012, HALF: 0.24 };
+const taiwanBackdrop = makePegBackdrop('台湾キャッチャー', 'つかんで投げる！手前に落ちたらGET', '#2a1410', '#ffb13d');
+const bridgeBackdrop = makePegBackdrop('PRIZE FIGURE', 'バーの間に箱を落とせばGET', '#1d2230', '#7ad7ff');
+
 class ClawMachine extends Machine {
-  constructor(x) {
+  constructor(x, presetName = 'paradise', opt = {}) {
+    const P = CLAW_PRESETS[presetName];
+    const sh = P.shell;
     super({
-      name: 'クレーンパラダイス', short: 'ぬいぐるみ', x,
-      home: { x: -0.33, z: 0.28 }, range: { xMax: 0.33, zMin: -0.29 }, speed: 0.2,
+      name: P.name, short: P.short, x, z: opt.z ?? 0, rotY: opt.rotY ?? 0,
+      home: P.home ?? { x: -0.33, z: 0.28 }, range: { xMax: 0.33, zMin: -0.29 }, speed: 0.2,
       dropHint: '離すとアームが下りるよ',
       shell: {
-        base: 'ufo', body: 0xff3d8b, signSide: 0x5b2bd6, interactive: true, lights: true, glow: 0xff66cc, hue: 0,
-        signTex: signTexture('CLAW PARADISE', '★ クレーンパラダイス ★', '#ff2e88', '#ff7a3d', '#7a2cff'),
-        backdrop: plushBackdrop, panel: ['#2a1650', '#4d1a5e'],
-        panelText: '①ボタン：よこ　②ボタン：おく　1回ずつしか押せません',
+        base: P.base, body: sh.body, trim: sh.trim, signSide: sh.signSide, interactive: true, lights: true, glow: sh.glow, hue: sh.hue,
+        signTex: signTexture(...sh.sign),
+        backdrop: sh.backdrop === 'taiwan' ? taiwanBackdrop : sh.backdrop === 'bridge' ? bridgeBackdrop : plushBackdrop,
+        panel: sh.panel, panelText: sh.panelText,
       },
     });
-    this.K = {
-      OPEN: 0.72, REST: 0.08, CLOSED: 0.02, CLOSE_RATE: 2.0,
+    this.preset = presetName; this.P = P;
+    this.K = Object.assign({
+      N: 3, OPEN: 0.72, REST: 0.08, CLOSED: 0.02, CLOSE_RATE: 2.0,
       R0: 0.032, HINGE_DY: -0.035, ARM: 0.13, TIP: 0.048, TIP_ANG: 50 * Math.PI / 180,
-      HUB_TOP: 0.80, DESC: 0.24, RISE: 0.2,
+      HUB_TOP: 0.80, DESC: 0.24, RISE: 0.2, HUB_R: 0.044, TILT: 0,
       GRIP: 3.0,         // アーム1本あたりの最大締め付け力 [N]
       WEIGHT: 4.0,       // アーム自重 [N]。これ以上の反力でケーブルがたるむ
       HOLD: 3.0,         // 景品を保持する最大の力 [N]（上昇後は weak 倍に弱まる）
+      HOLD_R: 0.1,       // 爪の中心からこの距離までの景品をつかめる
       SLIP: 0.03,        // 保持点からこれ以上ずれたら景品がすっぽ抜ける [m]
-    };
-    this.PHI = [0, 1, 2].map(i => Math.PI / 2 + i * Math.PI * 2 / 3);
+    }, P.K);
+    const N = this.K.N;
+    // 3本爪は120°おき、2本爪は左右に開く
+    this.PHI = N === 2 ? [0, Math.PI] : [0, 1, 2].map(i => Math.PI / 2 + i * Math.PI * 2 / 3);
     this.y = this.K.HUB_TOP;
-    this.theta = [this.K.REST, this.K.REST, this.K.REST];
-    this.force = [0, 0, 0]; this.grip = this.K.GRIP;
+    this.theta = Array(N).fill(this.K.REST);
+    this.force = Array(N).fill(0); this.grip = this.K.GRIP;
     this.sway = { x: 0, z: 0, vx: 0, vz: 0 };
     this.slack = 0; this.weak = 0.5; this.prev = null;
     this.landForce = 0; this.touching = new Map(); this.held = null;
-    this.restockNotice = true;   // ぬいぐるみの台は店員さんが補充する
+    this.plays = 0; this.ceiling = 8 + ((Math.random() * 8) | 0);   // 確率機の「天井」
+    this.restockNotice = true;   // 店員さんが補充する
     this.buildPhysics();
     this.buildClaw();
-    this.aimSurfaces = [
-      aimPlane(this.group, -0.45, 0.45, 0.0005, -0.40, HOLE.z0), aimPlane(this.group, HOLE.x1, 0.45, 0.0005, HOLE.z0, 0.40),
-      aimPlane(this.group, -0.45, HOLE.x1, -0.659, HOLE.z0, 0.40),
-    ];
-    this.spawn(17);
+    if (P.base === 'ufo') {
+      this.aimSurfaces = [
+        aimPlane(this.group, -0.45, 0.45, 0.0005, -0.40, HOLE.z0), aimPlane(this.group, HOLE.x1, 0.45, 0.0005, HOLE.z0, 0.40),
+        aimPlane(this.group, -0.45, HOLE.x1, -0.659, HOLE.z0, 0.40),
+      ];
+    } else {
+      this.aimSurfaces = [aimPlane(this.group, -0.45, 0.45, PIT_Y + 0.001, -0.40, 0.40)];
+      if (P.frontDrop) this.aimSurfaces.push(aimPlane(this.group, -0.45, 0.45, 0.0005, -0.40, 0.26));
+    }
+    this.spawnInitial();
     this.settle(4);
     this.hint(this.idleHint());
   }
   buildPhysics() {
-    const w = this.world;
-    staticBox(w, -0.45, 0.45, -0.06, 0, -0.40, HOLE.z0);
-    staticBox(w, HOLE.x1, 0.45, -0.06, 0, HOLE.z0, 0.40);
-    staticBox(w, -0.48, 0.48, 0, 1.05, 0.40, 0.44);
-    staticBox(w, -0.48, 0.48, 0, 1.05, -0.44, -0.40);
-    staticBox(w, 0.45, 0.49, 0, 1.05, -0.44, 0.44);
-    staticBox(w, -0.49, -0.45, -0.70, 1.05, -0.44, 0.48);
+    const w = this.world, P = this.P;
+    if (P.base === 'ufo') {
+      staticBox(w, -0.45, 0.45, -0.06, 0, -0.40, HOLE.z0);
+      staticBox(w, HOLE.x1, 0.45, -0.06, 0, HOLE.z0, 0.40);
+      staticBox(w, -0.48, 0.48, 0, 1.05, 0.40, 0.44);
+      staticBox(w, -0.48, 0.48, 0, 1.05, -0.44, -0.40);
+      staticBox(w, 0.45, 0.49, 0, 1.05, -0.44, 0.44);
+      staticBox(w, -0.49, -0.45, -0.70, 1.05, -0.44, 0.48);
+      staticBox(w, -0.48, 0.48, 1.0, 1.06, -0.44, 0.44);
+      staticBox(w, HOLE.x1, HOLE.x1 + 0.006, 0, 0.09, HOLE.z0, 0.40);
+      staticBox(w, -0.45, HOLE.x1 + 0.006, 0, 0.09, HOLE.z0 - 0.006, HOLE.z0);
+      staticBox(w, HOLE.x1, HOLE.x1 + 0.04, -0.70, 0, HOLE.z0, 0.48);
+      staticBox(w, -0.45, HOLE.x1, -0.70, -0.06, HOLE.z0 - 0.04, HOLE.z0);
+      staticBox(w, -0.45, HOLE.x1, -0.40, 0, 0.40, 0.44);
+      staticBox(w, -0.47, -0.19, -0.66, -0.40, 0.455, 0.475);
+      staticBox(w, -0.47, -0.19, -0.72, -0.66, HOLE.z0 - 0.04, 0.48);
+      return;
+    }
+    // 落下エリアのある台
+    staticBox(w, -0.48, 0.48, PIT_Y - 0.05, PIT_Y, -0.44, 0.44);
+    staticBox(w, -0.48, 0.48, PIT_Y, 1.05, 0.40, 0.44);
+    staticBox(w, -0.48, 0.48, PIT_Y, 1.05, -0.44, -0.40);
+    staticBox(w, 0.45, 0.49, PIT_Y, 1.05, -0.44, 0.44);
+    staticBox(w, -0.49, -0.45, PIT_Y, 1.05, -0.44, 0.44);
     staticBox(w, -0.48, 0.48, 1.0, 1.06, -0.44, 0.44);
-    staticBox(w, HOLE.x1, HOLE.x1 + 0.006, 0, 0.09, HOLE.z0, 0.40);
-    staticBox(w, -0.45, HOLE.x1 + 0.006, 0, 0.09, HOLE.z0 - 0.006, HOLE.z0);
-    staticBox(w, HOLE.x1, HOLE.x1 + 0.04, -0.70, 0, HOLE.z0, 0.48);
-    staticBox(w, -0.45, HOLE.x1, -0.70, -0.06, HOLE.z0 - 0.04, HOLE.z0);
-    staticBox(w, -0.45, HOLE.x1, -0.40, 0, 0.40, 0.44);
-    staticBox(w, -0.47, -0.19, -0.66, -0.40, 0.455, 0.475);
-    staticBox(w, -0.47, -0.19, -0.72, -0.66, HOLE.z0 - 0.04, 0.48);
+    const g = this.group;
+    if (P.frontDrop) {
+      // 台湾キャッチャー: 奥から手前まで景品を山積みにする台。手前の帯（z>0.26）が取り出し口
+      staticBox(w, -0.45, 0.45, -0.04, 0, -0.40, 0.26);
+      boxMesh(-0.45, 0.45, -0.04, 0, -0.40, 0.26, M.felt.clone(), g, { cast: false }).material.color.set(0xd04a2c);
+      boxMesh(-0.45, 0.45, PIT_Y, -0.04, 0.245, 0.26, M.darkMetal, g);
+      const hz = boxMesh(-0.45, 0.45, 0.0005, 0.002, 0.23, 0.26, M.hazard.clone(), g, { cast: false });
+      hz.material.map = M.hazard.map.clone(); hz.material.map.repeat.set(3, 1);
+    }
+    if (P.bridge) {
+      // 橋渡し: 手前と奥に平行なゴム巻きのバー。箱がその間に落ちれば GET
+      const bar = new THREE.MeshStandardMaterial({ color: 0x1a1a1e, roughness: 0.7 });
+      for (const sz of [-1, 1]) {
+        const z = sz * BRIDGE.Z;
+        const b = new CANNON.Body({ mass: 0, material: PM.stat, collisionFilterGroup: G_STATIC, collisionFilterMask: G_PRIZE | G_CLAW });
+        const q = new CANNON.Quaternion(); q.setFromAxisAngle(v3(0, 0, 1), Math.PI / 2);
+        b.addShape(new CANNON.Cylinder(BRIDGE.R, BRIDGE.R, BRIDGE.HALF * 2, 16), v3(0, 0, 0), q);
+        b.position.set(0, BRIDGE.Y, z);
+        w.addBody(b);
+        const m = mesh(new THREE.CylinderGeometry(BRIDGE.R, BRIDGE.R, BRIDGE.HALF * 2, 24), bar); m.rotation.z = Math.PI / 2; m.position.set(0, BRIDGE.Y, z); g.add(m);
+        for (const sx of [-1, 1]) {
+          const post = mesh(new THREE.CylinderGeometry(0.01, 0.01, BRIDGE.Y - PIT_Y, 14), M.chrome);
+          post.position.set(sx * (BRIDGE.HALF + 0.01), (BRIDGE.Y + PIT_Y) / 2, z); g.add(post);
+          staticBox(w, sx * (BRIDGE.HALF + 0.01) - 0.01, sx * (BRIDGE.HALF + 0.01) + 0.01, PIT_Y, BRIDGE.Y + 0.03, z - 0.01, z + 0.01);
+          const cap = mesh(new THREE.CylinderGeometry(0.018, 0.018, 0.02, 16), M.chrome); cap.rotation.z = Math.PI / 2; cap.position.set(sx * (BRIDGE.HALF + 0.01), BRIDGE.Y, z); g.add(cap);
+        }
+      }
+    }
   }
   buildClaw() {
-    const K = this.K, g = this.group;
+    const K = this.K, g = this.group, N = K.N;
     this.gantry = buildGantry(g);
     const hub = this.hubVis = new THREE.Group();
     const housing = mesh(new THREE.CylinderGeometry(0.036, 0.044, 0.07, 40), M.clawMetal); housing.position.y = 0.022; hub.add(housing);
     const cap = mesh(new THREE.CylinderGeometry(0.02, 0.036, 0.02, 32), M.clawMetal); cap.position.y = 0.067; hub.add(cap);
-    const ringM = mesh(new THREE.TorusGeometry(0.044, 0.004, 10, 40), paint(0xff3d8b)); ringM.rotation.x = Math.PI / 2; hub.add(ringM);
+    const ringM = mesh(new THREE.TorusGeometry(0.044, 0.004, 10, 40), paint(this.P.shell.body)); ringM.rotation.x = Math.PI / 2; hub.add(ringM);
     const bottom = mesh(new THREE.CylinderGeometry(0.03, 0.026, 0.02, 32), M.darkMetal); bottom.position.y = -0.022; hub.add(bottom);
-    const label = new THREE.Mesh(new THREE.CylinderGeometry(0.0445, 0.0445, 0.016, 40, 1, true, 0, Math.PI), new THREE.MeshStandardMaterial({
-      color: 0xffffff, roughness: 0.4, transparent: true,
-      map: canvasTex(512, 64, (c, w, h) => { c.clearRect(0, 0, w, h); c.fillStyle = '#ff2e88'; c.font = `900 46px ${FONT}`; c.textAlign = 'center'; c.fillText('★ CLAW ★', w / 2, 50); }),
-    }));
-    label.position.y = 0.035; label.rotation.y = -Math.PI / 2; hub.add(label);
+    hub.scale.setScalar(K.HUB_R / 0.044);
     g.add(hub);
-    const armGeo = new RoundedBoxGeometry(0.012, K.ARM, 0.022, 2, 0.004);
-    const tipGeo = new RoundedBoxGeometry(0.014, K.TIP, 0.026, 2, 0.005);
+    const s = K.ARM / 0.13;
+    const armGeo = new RoundedBoxGeometry(0.012 * Math.sqrt(s), K.ARM, (N === 2 ? 0.04 : 0.022) * Math.sqrt(s), 2, 0.004);
+    const tipGeo = new RoundedBoxGeometry(0.014 * Math.sqrt(s), K.TIP, (N === 2 ? 0.05 : 0.026) * Math.sqrt(s), 2, 0.005);
     const knuckleGeo = new THREE.CylinderGeometry(0.008, 0.008, 0.026, 16);
     this.prongVis = [];
-    for (let i = 0; i < 3; i++) {
+    for (let i = 0; i < N; i++) {
       const p = new THREE.Group();
       const arm = mesh(armGeo, M.clawMetal); arm.position.y = -K.ARM / 2; p.add(arm);
       const kn = mesh(knuckleGeo, M.darkMetal); kn.rotation.x = Math.PI / 2; p.add(kn);
@@ -1604,15 +1809,16 @@ class ClawMachine extends Machine {
     }
     // 物理ボディ（キネマティック）
     this.hubBody = new CANNON.Body({ mass: 0, type: CANNON.Body.KINEMATIC, material: PM.claw, collisionFilterGroup: G_CLAW, collisionFilterMask: G_PRIZE });
-    this.hubBody.addShape(new CANNON.Cylinder(0.044, 0.044, 0.09, 16), v3(0, 0.02, 0));
+    this.hubBody.addShape(new CANNON.Cylinder(K.HUB_R, K.HUB_R, 0.09 * K.HUB_R / 0.044, 16), v3(0, 0.02, 0));
     this.hubBody.isHub = true;
     this.world.addBody(this.hubBody);
     this.prongBodies = [];
-    for (let i = 0; i < 3; i++) {
+    const halfW = (N === 2 ? 0.022 : 0.013) * Math.sqrt(s);
+    for (let i = 0; i < N; i++) {
       const b = new CANNON.Body({ mass: 0, type: CANNON.Body.KINEMATIC, material: PM.claw, collisionFilterGroup: G_CLAW, collisionFilterMask: G_PRIZE });
-      b.addShape(new CANNON.Box(v3(0.008, K.ARM / 2, 0.013)), v3(0, -K.ARM / 2, 0));
+      b.addShape(new CANNON.Box(v3(0.008, K.ARM / 2, halfW)), v3(0, -K.ARM / 2, 0));
       const tq = new CANNON.Quaternion(); tq.setFromAxisAngle(v3(0, 0, 1), -K.TIP_ANG);
-      b.addShape(new CANNON.Box(v3(0.009, K.TIP / 2 + 0.002, 0.015)),
+      b.addShape(new CANNON.Box(v3(0.009, K.TIP / 2 + 0.002, halfW + 0.002)),
         v3(-Math.sin(K.TIP_ANG) * K.TIP / 2, -K.ARM - Math.cos(K.TIP_ANG) * K.TIP / 2, 0), tq);
       b.prongIndex = i;
       this.world.addBody(b);
@@ -1620,52 +1826,134 @@ class ClawMachine extends Machine {
     }
     this.applyClawBodies(H);
   }
+  // ---- 景品の配置 ----
+  spawnInitial() {
+    switch (this.preset) {
+      case 'bigplush': this.spawnBig(); break;
+      case 'taiwan': this.spawnTaiwan(34, false); break;
+      case 'bridge': this.spawnBridge(); break;
+      case 'keychain': this.spawn(30); break;
+      case 'ufo2': this.spawn(15); break;
+      default: this.spawn(17);
+    }
+  }
   spawn(count, dropFromAbove = false) {
+    const sc = this.P.scale ?? 1;
     const kinds = ['bear', 'bear', 'bear', 'bear', 'bear', 'bear', 'mochi', 'mochi', 'mochi', 'mochi', 'mochi', 'cat', 'cat', 'cat', 'box', 'box', 'box'];
     const plan = [];
     for (let i = 0; i < count; i++) plan.push(kinds[i % kinds.length]);
     plan.sort(() => Math.random() - 0.5);
-    const cells = [];
-    for (let layer = 0; layer < 3; layer++)
-      for (let ix = 0; ix < 6; ix++)
-        for (let iz = 0; iz < 5; iz++) {
-          const x = -0.36 + ix * 0.145, z = -0.3 + iz * 0.14;
+    const step = 0.145 * Math.max(sc, 0.62), cells = [];
+    for (let layer = 0; layer < 4; layer++)
+      for (let x = -0.36; x <= 0.38; x += step)
+        for (let z = -0.3; z <= 0.3; z += step * 0.97) {
           if (x < -0.15 && z > 0.08) continue;
-          cells.push([x, (dropFromAbove ? 0.45 : 0.07) + layer * 0.15, z]);
+          cells.push([x, (dropFromAbove ? 0.45 : 0.07 * sc + 0.01) + layer * 0.15 * sc, z]);
         }
     cells.sort((a, b) => a[1] - b[1] || (Math.hypot(a[0] + 0.3, a[2] - 0.28) - Math.hypot(b[0] + 0.3, b[2] - 0.28)) + rnd(-0.25, 0.25));
     plan.forEach((kind, i) => {
       const [x, y, z] = cells[i];
-      const body = plushBody(kind);
-      body.position.set(x + rnd(-0.02, 0.02), y + (kind === 'bear' ? BEAR_COM : 0), z + rnd(-0.02, 0.02));
+      const body = plushBody(kind, sc);
+      body.position.set(x + rnd(-0.02, 0.02) * sc, y + (kind === 'bear' ? BEAR_COM * sc : 0), z + rnd(-0.02, 0.02) * sc);
       body.quaternion.setFromEuler(rnd(-0.4, 0.4), rnd(0, Math.PI * 2), rnd(-0.4, 0.4));
-      this.addPrize(kind, PLUSH_KINDS[kind](), body);
+      const g = PLUSH_KINDS[kind]();
+      g.scale.setScalar(sc);
+      this.addPrize(kind, g, body);
     });
   }
-  // 景品が少なくなったら補充（獲得済みのものは片付ける）
+  // 大きなぬいぐるみを1つ、取り出し口の近くに置く
+  spawnBig() {
+    const kind = Math.random() < 0.5 ? 'enaga' : 'usa';
+    const b = new CANNON.Body({ mass: 0.4, material: PM.plush, collisionFilterGroup: G_PRIZE, collisionFilterMask: G_STATIC | G_CLAW | G_PRIZE, linearDamping: 0.05, angularDamping: 0.5 });
+    let g;
+    const S = 1.15;
+    if (kind === 'enaga') {
+      b.addShape(new CANNON.Sphere(0.088 * S));
+      b.addShape(new CANNON.Box(v3(0.015 * S, 0.006 * S, 0.05 * S)), v3(0, 0.02 * S, -0.12 * S));
+      g = shimaEnagaMesh();
+    } else {
+      // 重心は胴体寄り（頭が重すぎると勝手に倒れたり起きたりする）
+      b.addShape(new CANNON.Sphere(0.078 * S), v3(0, -0.03 * S, 0));
+      b.addShape(new CANNON.Sphere(0.064 * S), v3(0, 0.075 * S, 0.005 * S));
+      g = yumeUsaMesh();
+    }
+    g.scale.setScalar(S);
+    b.position.set(rnd(-0.05, 0.08), (kind === 'enaga' ? 0.09 : 0.11) * S, rnd(-0.05, 0.05));
+    b.quaternion.setFromEuler(0, rnd(-0.6, 0.6), 0);
+    this.addPrize(kind, g, b);
+  }
+  spawnTaiwan(count, fromAbove) {
+    for (let i = 0; i < count; i++) {
+      const cup = Math.random() < 0.18;
+      const b = new CANNON.Body({ mass: cup ? 0.09 : 0.07, material: PM.box, collisionFilterGroup: G_PRIZE, collisionFilterMask: G_STATIC | G_CLAW | G_PRIZE, linearDamping: 0.06, angularDamping: 0.3 });
+      let g;
+      if (cup) { b.addShape(new CANNON.Cylinder(0.046, 0.038, 0.09, 12)); g = cupNoodleMesh(); }
+      else { b.addShape(new CANNON.Box(v3(0.06, 0.08, 0.016))); g = chipBagMesh(pick(CHIP_FLAVORS)); }
+      const layer = (i / 12) | 0;
+      b.position.set(rnd(-0.38, 0.38), (fromAbove ? 0.5 : 0.06) + layer * 0.07 + rnd(0, 0.03), rnd(-0.34, fromAbove ? 0.0 : 0.1));
+      b.quaternion.setFromEuler(cup ? rnd(-0.3, 0.3) : Math.PI / 2 + rnd(-0.4, 0.4), rnd(0, Math.PI * 2), rnd(-0.3, 0.3));
+      this.addPrize(cup ? 'cup' : 'chips', g, b);
+    }
+  }
+  spawnBridge() {
+    const b = new CANNON.Body({ mass: 0.3, material: PM.box, collisionFilterGroup: G_PRIZE, collisionFilterMask: G_STATIC | G_CLAW | G_PRIZE, linearDamping: 0.05, angularDamping: 0.2 });
+    b.addShape(new CANNON.Box(v3(0.08, 0.05, 0.12)));
+    b.position.set(rnd(-0.03, 0.03), BRIDGE.Y + BRIDGE.R + 0.051, rnd(-0.01, 0.01));
+    b.quaternion.setFromEuler(0, rnd(-0.12, 0.12), 0);
+    this.addPrize('figure', figureBoxMesh(), b);
+  }
+  // 補充（獲得済みのものは片付ける）
   restock() {
     const left = this.prizes.filter(p => !p.won).length;
-    if (left >= 9) return false;
-    for (const p of this.prizes.filter(p => p.won)) this.removePrize(p);
-    this.spawn(8, true);
+    const clear = () => { for (const p of this.prizes.filter(p => p.won)) this.removePrize(p); };
+    switch (this.preset) {
+      case 'bigplush': if (left) return false; clear(); this.spawnBig(); break;
+      case 'bridge': if (left) return false; clear(); this.spawnBridge(); break;
+      case 'taiwan': if (left >= 22) return false; clear(); this.spawnTaiwan(14, true); break;
+      case 'keychain': if (left >= 16) return false; clear(); this.spawn(14, true); break;
+      default: if (left >= 9) return false; clear(); this.spawn(8, true);
+    }
     this.awake = 4;
     return true;
   }
-  onBegin() { this.weak = Math.random() < 0.15 ? 1.0 : rnd(0.2, 0.7); }
+  // アームの強さ。確率機は「天井」に達したときだけ強い
+  onBegin() {
+    this.plays++;
+    switch (this.preset) {
+      case 'bigplush':
+        if (this.plays >= this.ceiling) { this.weak = 1.0; this.plays = 0; this.ceiling = 8 + ((Math.random() * 8) | 0); }
+        else this.weak = 0.1;
+        break;
+      case 'taiwan':
+        if (this.plays >= this.ceiling) { this.weak = 1.0; this.plays = 0; this.ceiling = 6 + ((Math.random() * 6) | 0); }
+        else this.weak = rnd(0.25, 0.5);
+        break;
+      case 'bridge': this.weak = 1.0; break;
+      case 'keychain': this.weak = rnd(0.3, 0.85); break;
+      default: this.weak = Math.random() < 0.15 ? 1.0 : rnd(0.2, 0.7);
+    }
+  }
   aimOrigin() { return new THREE.Vector3(this.x + this.sway.x, this.y - 0.02, this.z + this.sway.z); }
   aimTargets() { return [...this.prizes.map(p => p.group), ...this.aimSurfaces]; }
   onDrop() { this.slack = 0; this.setState('drop', ''); }
   isWin(b) { return b.position.y < -0.14; }
+  spillBack(p) {
+    p.body.position.set(rnd(-0.1, 0.35), 0.5, rnd(-0.3, -0.1));
+    p.body.velocity.setZero(); p.body.angularVelocity.setZero();
+  }
+  floorY() { return this.P.base === 'ufo' || this.P.frontDrop ? 0 : PIT_Y; }
 
   clawPose() {
     const K = this.K;
     const hx = this.x + this.sway.x, hy = this.y, hz = this.z + this.sway.z;
+    const tilt = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), K.TILT);
     const qY = new THREE.Quaternion(), qZ = new THREE.Quaternion();
     const prongs = this.PHI.map((phi, i) => {
       qY.setFromAxisAngle(AX_Y, -phi); qZ.setFromAxisAngle(AX_Z, this.theta[i]);
-      return { pos: new THREE.Vector3(hx + K.R0 * Math.cos(phi), hy + K.HINGE_DY, hz + K.R0 * Math.sin(phi)), q: qY.clone().multiply(qZ), theta: this.theta[i], phi };
+      const off = new THREE.Vector3(K.R0 * Math.cos(phi), K.HINGE_DY, K.R0 * Math.sin(phi)).applyQuaternion(tilt);
+      return { pos: new THREE.Vector3(hx, hy, hz).add(off), q: tilt.clone().multiply(qY.clone().multiply(qZ)), theta: this.theta[i], phi };
     });
-    return { hub: new THREE.Vector3(hx, hy, hz), prongs };
+    return { hub: new THREE.Vector3(hx, hy, hz), prongs, tilt };
   }
   // 目標姿勢に置き、速度は前ステップとの差分から与える（接触の摩擦が正しく働くように）
   applyClawBodies(h) {
@@ -1695,7 +1983,7 @@ class ClawMachine extends Machine {
   // トルク制限モーター: 力が上限未満なら閉じ、上限で止まり、押し負けると開く
   squeeze(h) {
     const K = this.K;
-    for (let i = 0; i < 3; i++) {
+    for (let i = 0; i < K.N; i++) {
       const f = this.force[i];
       if (f < this.grip) this.theta[i] = Math.max(K.CLOSED, this.theta[i] - K.CLOSE_RATE * h * Math.min(1, (this.grip - f) / (this.grip * 0.3)));
       else if (f > this.grip * 1.4) this.theta[i] = Math.min(K.OPEN, this.theta[i] + 0.5 * h);
@@ -1704,13 +1992,13 @@ class ClawMachine extends Machine {
   // 2本以上の爪が触れている景品を、力の上限つきジョイントで爪につなぐ。
   // 重さや揺れに負けると景品は爪の間をすべり落ちる。
   tryHold() {
-    const hub = this.hubBody.position, tipY = this.tipLowestY();
+    const hub = this.hubBody.position, tipY = this.tipLowestY(), K = this.K;
     let best = null;
     for (const [body, set] of this.touching) {
       if (set.size < 2) continue;
       const off = Math.hypot(body.position.x - hub.x, body.position.z - hub.z);
-      if (off > 0.1 || body.position.y > hub.y || body.position.y < tipY - 0.06) continue;
-      const quality = (set.size === 3 ? 1 : 0.72) * (1 - 0.45 * Math.min(1, off / 0.1));
+      if (off > K.HOLD_R || body.position.y > hub.y || body.position.y < tipY - 0.06) continue;
+      const quality = (set.size === K.N ? 1 : 0.72) * (1 - 0.45 * Math.min(1, off / K.HOLD_R));
       if (!best || quality > best.quality) best = { body, quality };
     }
     if (!best) return;
@@ -1718,21 +2006,22 @@ class ClawMachine extends Machine {
     const joint = new CANNON.PointToPointConstraint(this.hubBody, pivot, best.body, v3(0, 0, 0));
     this.world.addConstraint(joint);
     this.held = { body: best.body, joint, pivot, quality: best.quality };
-    this.setHoldForce(this.K.HOLD * best.quality);
+    this.setHoldForce(K.HOLD * best.quality);
   }
   // cannon-es は1ステップあたりの力積で上限をかけるので F*H
   setHoldForce(f) { for (const eq of this.held.joint.equations) { eq.maxForce = f * H; eq.minForce = -f * H; } }
   letGo() { if (!this.held) return; this.world.removeConstraint(this.held.joint); this.held = null; }
+  openAll(rate, h, max = this.K.OPEN) { for (let i = 0; i < this.K.N; i++) this.theta[i] = Math.min(max, this.theta[i] + rate * h); }
 
   step(h) {
     const K = this.K;
     let [tvx, tvz] = this.moveXZ();
     switch (this.state) {
       case 'drop':
-        for (let i = 0; i < 3; i++) this.theta[i] = Math.min(K.OPEN, this.theta[i] + 2.4 * h);
+        this.openAll(2.4, h);
         if (this.t > 0.3) {
           this.slack = this.landForce > K.WEIGHT ? this.slack + h : Math.max(0, this.slack - h * 0.5);
-          if (this.slack > 0.06 || this.tipLowestY() <= 0.006) {
+          if (this.slack > 0.06 || this.tipLowestY() <= this.floorY() + 0.006) {
             this.grip = K.GRIP; this.touching.clear();
             this.S.clank();
             this.setState('grab');
@@ -1752,7 +2041,24 @@ class ClawMachine extends Machine {
       case 'lift':
         this.squeeze(h);
         this.y += K.RISE * Math.min(1, this.t * 4) * h;
-        if (this.y >= K.HUB_TOP) { this.y = K.HUB_TOP; this.S.clank(); this.setState('relax'); }
+        if (this.y >= K.HUB_TOP) { this.y = K.HUB_TOP; this.S.clank(); this.setState(this.P.frontDrop ? 'fling' : 'relax'); }
+        break;
+      case 'fling':
+        // 台湾キャッチャー: 上まで来たらアームを振って景品を放り投げる（どこへ飛ぶかは運しだい）
+        if (!this.flung) {
+          this.flung = true;
+          // ふだんはどの方向へ飛ぶか分からない。天井に達したときだけ手前（取り出し口）へ投げる
+          const ang = this.weak >= 1 ? rnd(-0.5, 0.5) : rnd(-Math.PI, Math.PI), sp = rnd(0.5, 1.3);
+          this.sway.vx += Math.sin(ang) * 0.6; this.sway.vz += Math.cos(ang) * 0.6;
+          if (this.held) {
+            const b = this.held.body;
+            this.letGo();
+            b.velocity.set(Math.sin(ang) * sp, rnd(0.3, 0.8), Math.cos(ang) * sp);
+            b.angularVelocity.set(rnd(-8, 8), rnd(-8, 8), rnd(-8, 8));
+          }
+        }
+        this.openAll(4.0, h, K.OPEN + 0.2);
+        if (this.t > 0.6) { this.flung = false; this.setState('return'); }
         break;
       case 'relax':
         // 上まで上がるとアームの力が弱まる
@@ -1762,18 +2068,18 @@ class ClawMachine extends Machine {
         if (this.t > 0.4) this.setState('return');
         break;
       case 'return': {
-        this.squeeze(h);
+        if (!this.P.frontDrop) this.squeeze(h);
         let done;
         [tvx, tvz, done] = this.returnHome(h);
         if (done) this.setState('release');
         break;
       }
       case 'release':
-        if (this.t > 0.2) { this.letGo(); for (let i = 0; i < 3; i++) this.theta[i] = Math.min(K.OPEN + 0.25, this.theta[i] + 3.0 * h); }
+        if (this.t > 0.2) { this.letGo(); this.openAll(3.0, h, K.OPEN + 0.25); }
         if (this.t > 1.2) this.setState('reset');
         break;
       case 'reset':
-        for (let i = 0; i < 3; i++) this.theta[i] += Math.sign(K.REST - this.theta[i]) * Math.min(Math.abs(K.REST - this.theta[i]), 2.4 * h);
+        for (let i = 0; i < K.N; i++) this.theta[i] += Math.sign(K.REST - this.theta[i]) * Math.min(Math.abs(K.REST - this.theta[i]), 2.4 * h);
         if (this.t > 0.5) this.finishPlay();
         break;
     }
@@ -1785,11 +2091,11 @@ class ClawMachine extends Machine {
     const w2 = 9.82 / L, damp = 2 * 0.09 * Math.sqrt(w2), s = this.sway;
     s.vx += (-w2 * s.x - damp * s.vx - ax * 0.6) * h; s.vz += (-w2 * s.z - damp * s.vz - az * 0.6) * h;
     s.x += s.vx * h; s.z += s.vz * h;
-    for (const k of ['x', 'z']) if (Math.abs(s[k]) > 0.02) { s[k] = Math.sign(s[k]) * 0.02; s['v' + k] *= -0.3; }
+    for (const k of ['x', 'z']) if (Math.abs(s[k]) > 0.03) { s[k] = Math.sign(s[k]) * 0.03; s['v' + k] *= -0.3; }
     this.applyClawBodies(h);
   }
   afterStep() {
-    const f = [0, 0, 0], tipY = this.tipLowestY();
+    const f = Array(this.K.N).fill(0), tipY = this.tipLowestY();
     let up = 0;
     for (const ce of this.world.contacts) {
       const a = ce.bi, b = ce.bj;
@@ -1810,8 +2116,10 @@ class ClawMachine extends Machine {
       if (ny < -0.35 && below) up += Math.abs(ce.multiplier) * -ny;
     }
     // 接触力は衝撃でスパイクするので平滑化
-    for (let i = 0; i < 3; i++) this.force[i] += (f[i] - this.force[i]) * 0.25;
+    for (let i = 0; i < this.K.N; i++) this.force[i] += (f[i] - this.force[i]) * 0.25;
     this.landForce += (up - this.landForce) * 0.25;
+    // 橋渡しのバーは静的物体なので、爪先がバーに当たったら着地とみなす
+    if (this.P.bridge && this.state === 'drop' && this.tipLowestY() <= BRIDGE.Y + BRIDGE.R && Math.abs(Math.abs(this.z) - BRIDGE.Z) < 0.06 && Math.abs(this.x) < BRIDGE.HALF) this.landForce = Math.max(this.landForce, this.K.WEIGHT * 1.5);
     if (this.held) {
       const hp = this.hubBody.position, bp = this.held.body.position, pv = this.held.pivot;
       if (Math.hypot(hp.x + pv.x - bp.x, hp.y + pv.y - bp.y, hp.z + pv.z - bp.z) > this.K.SLIP) this.letGo();
@@ -1822,11 +2130,11 @@ class ClawMachine extends Machine {
     const pose = this.prev || this.clawPose();
     this.hubVis.position.copy(pose.hub);
     const L = Math.max(0.08, 0.93 - this.y);
-    this.hubVis.rotation.set(this.sway.z / L * 0.8, 0, -this.sway.x / L * 0.8);
+    this.hubVis.rotation.set(this.sway.z / L * 0.8 + this.K.TILT, 0, -this.sway.x / L * 0.8);
     pose.prongs.forEach((p, i) => { this.prongVis[i].position.copy(p.pos); this.prongVis[i].quaternion.copy(p.q); });
     this.gantry.carriage.position.set(this.x, 0.935, this.z);
     this.gantry.bridge.position.x = this.x;
-    placeCable(this.gantry.cable, this.x, this.z, pose.hub.clone().add(new THREE.Vector3(0, 0.077, 0)));
+    placeCable(this.gantry.cable, this.x, this.z, pose.hub.clone().add(new THREE.Vector3(0, 0.077 * this.K.HUB_R / 0.044, 0)));
   }
   motorLevel() {
     const moving = Math.min(1, (Math.abs(this.vx) + Math.abs(this.vz)) / 0.05);
@@ -1883,7 +2191,7 @@ class RingHookMachine extends Machine {
         panelText: 'リングをフックにかけて板を持ち上げるとGET！',
       },
     });
-    // フックの腕の向き（0: 手前、-π/2: 左）。リングは腕と同じ向きを向いて吊られる
+    // フックの腕の向き（0: 手前、-π/2: 左）。リングはどちらの台でも正面を向いて吊られる
     this.hookYaw = veg ? -Math.PI / 2 : 0;
     this.goodsKinds = veg ? ['melon', 'cabbage', 'onion', 'carrot', 'potato'] : ['tissue', 'toilet', 'kitchen', 'detergent', 'dish', 'toothpaste'];
     this.K = {
@@ -2053,7 +2361,6 @@ class RingHookMachine extends Machine {
       this.ring.addShape(new CANNON.Box(v3(segHalf, K.RING_T, K.RING_T)), v3(R * Math.cos(a), R * Math.sin(a), 0), q);
     }
     this.ring.position.set(this.x, y + K.LINK / 2 - R, this.z);
-    this.ring.quaternion.setFromAxisAngle(v3(0, 1, 0), this.hookYaw);
     this.world.addBody(this.ring);
     this.world.addConstraint(new CANNON.PointToPointConstraint(this.links[K.LINKS - 1], v3(0, 0, 0), this.ring, v3(0, R + K.LINK / 2, 0)));
     this.ringVis = mesh(new THREE.TorusGeometry(R, K.RING_T, 14, 48), M.chrome);
@@ -2176,11 +2483,12 @@ class RingHookMachine extends Machine {
     this.rope();
     this.ringTwist();
   }
-  // チェーンのねじれ剛性: リングはフックの腕の向きを向こうとする（振り子の揺れは自由）
+  // ボールチェーンのねじれ剛性（弱い）: リングはどの台でも正面向きが自然な姿勢。
+  // 揺れはガントリーの加減速・チェーン・接触だけから生まれる（人工的な力は加えない）
   ringTwist() {
     const r = this.ring, n = r.quaternion.vmult(v3(0, 0, 1));
-    const k = 0.0006, c = 0.00004;
-    const err = Math.atan2(n.x, n.z) - this.hookYaw;     // フックの腕の向きからのずれ
+    const k = 0.00025, c = 0.00002;
+    const err = Math.atan2(n.x, n.z);
     const wrapped = Math.atan2(Math.sin(2 * err), Math.cos(2 * err)) / 2;   // 表裏どちら向きでもよい
     r.torque.y += -k * wrapped - c * r.angularVelocity.y;
   }
@@ -2260,9 +2568,41 @@ class RingHookMachine extends Machine {
 // ============================================================
 // 店内の配置
 // ============================================================
+// 手前の列（奥を向く）→ 奥の列（手前を向く）の順に並べる。横スワイプはこの順に切り替わる
+const ROW_B = { z: 3.05, rotY: Math.PI };
+new ClawMachine(-2.5, 'keychain');
+new ClawMachine(-1.25, 'ufo2');
 const clawMachine = new ClawMachine(0);
 const ringMachine = new RingHookMachine(1.25);
 const vegMachine = new RingHookMachine(2.5, { kind: 'veg' });
+new ClawMachine(0, 'bridge', ROW_B);
+new ClawMachine(-1.25, 'taiwan', ROW_B);
+new ClawMachine(-2.5, 'bigplush', ROW_B);
+
+// 影を落とすスポットライトは1つだけ。遊んでいる台（歩いているときは一番近い台）の照明と入れ替える
+const shadowSpot = new THREE.SpotLight(0xfff3e6, 4.6, 2.6, 1.15, 0.8, 2);
+shadowSpot.castShadow = true; shadowSpot.shadow.mapSize.set(1024, 1024);
+shadowSpot.shadow.camera.near = 0.1; shadowSpot.shadow.camera.far = 1.8;
+shadowSpot.shadow.bias = -0.0004; shadowSpot.shadow.normalBias = 0.004; shadowSpot.shadow.radius = 4;
+scene.add(shadowSpot, shadowSpot.target);
+let shadowOwner = null;
+function updateShadowSpot() {
+  let m = active;
+  if (!m) {
+    let best = Infinity;
+    for (const c of machines) {
+      const d = Math.hypot(c.group.position.x - camera.position.x, c.group.position.z - camera.position.z);
+      if (d < best) { best = d; m = c; }
+    }
+  }
+  if (!m || m === shadowOwner || !m.spot) return;
+  if (shadowOwner) shadowOwner.spot.intensity = shadowSpot.intensity;
+  m.spot.intensity = 0;
+  m.spot.getWorldPosition(shadowSpot.position);
+  m.spot.target.getWorldPosition(shadowSpot.target.position);
+  shadowSpot.target.updateMatrixWorld();
+  shadowOwner = m;
+}
 
 // 飾りの筐体（遊べない）
 const decorMats = new Map();
@@ -2294,10 +2634,8 @@ function decorCabinet(x, z, rotY, hue, label) {
   const zMin = rotY === 0 ? z - 0.48 : z - 0.64, zMax = rotY === 0 ? z + 0.64 : z + 0.48;
   addObstacle(x - 0.53, x + 0.53, zMin, zMax);
 }
-decorCabinet(-1.25, 0, 0, 0.55, ['MOCHI LAND', '★ もちもちランド ★', ['#3ec7ff', '#7a5cff', '#ff5ca8']]);
-decorCabinet(-2.45, 0, 0, 0.25, ['BEAR FOREST', '★ くまの森 ★', ['#4caf50', '#ffb300', '#ff7043']]);
-decorCabinet(-1.25, 3.05, Math.PI, 0.8, ['NEKO NEKO', '★ ねこねこパーク ★', ['#ff9800', '#ff4081', '#7c4dff']]);
-decorCabinet(0.0, 3.05, Math.PI, 0.1, ['LUCKY CLAW', '★ ラッキークロー ★', ['#00bcd4', '#3f51b5', '#e91e63']]);
+decorCabinet(1.25, ROW_B.z, Math.PI, 0.8, ['NEKO NEKO', '★ ねこねこパーク ★', ['#ff9800', '#ff4081', '#7c4dff']]);
+decorCabinet(2.5, ROW_B.z, Math.PI, 0.1, ['LUCKY CLAW', '★ ラッキークロー ★', ['#00bcd4', '#3f51b5', '#e91e63']]);
 
 // ============================================================
 // 歩行（一人称）
@@ -2382,8 +2720,10 @@ function limitControls(m) {
   controls.maxDistance = Math.max(2.4, front.pos.distanceTo(front.target) * 1.15);
   controls.minPolarAngle = 0.45;
   controls.maxPolarAngle = 1.5;
-  controls.minAzimuthAngle = -0.85;
-  controls.maxAzimuthAngle = 0.85;
+  // 台の正面方向を基準に左右 0.85rad（奥の列の台は向きが反対）
+  const d = front.pos.clone().sub(front.target), base = Math.atan2(d.x, d.z);
+  controls.minAzimuthAngle = base - 0.85;
+  controls.maxAzimuthAngle = base + 0.85;
 }
 // 横カメラ: ②を押すと真横から見る。下りてつかみ、少し上がるまで横のまま、その後は正面に戻って見届ける
 let autoSide = false, sideCamOn = true, lastState = '';
@@ -2397,7 +2737,7 @@ function toView(name, dur = 0.6) {
   const idx = VIEW_ORDER.findIndex(v => v[0] === name);
   viewIdx = Math.max(0, idx);
   const v = active.view(name);
-  $('viewBtn').textContent = '視点: ' + VIEW_ORDER[viewIdx][1];
+  setViewLabel('視点: ' + VIEW_ORDER[viewIdx][1]);
   startTween(v.pos, v.target, dur, () => { controls.target.copy(v.target); controls.enabled = true; }, fovFor(FOV_PLAY), true);
 }
 function autoCamera() {
@@ -2406,7 +2746,7 @@ function autoCamera() {
   if (want && !autoSide) {
     autoSide = true;
     const v = m.view('depth');
-    $('viewBtn').textContent = '視点: 真横';
+    setViewLabel('視点: 真横');
     startTween(v.pos, v.target, 0.45, () => {}, fovFor(FOV_DEPTH), true);
   } else if (!want && autoSide && !tween) {
     autoSide = false;
@@ -2435,10 +2775,11 @@ function followFrame(dt) {
   controls.target.lerp(tgt, k);
   camera.position.lerp(pos, k);
 }
+function setViewLabel(t) { const b = $('viewBtn'); b.title = t + '（V）'; b.setAttribute('aria-label', t); }
 function setSideCam(on) {
   sideCamOn = on;
   try { localStorage.setItem('sideCam', on ? 'on' : 'off'); } catch (_) { /* 保存できなくても動作は変わらない */ }
-  $('sideBtn').textContent = '横カメラ: ' + (on ? 'ON' : 'OFF');
+  $('sideBtn').title = `横カメラ: ${on ? 'ON' : 'OFF'}（②で真横から見る）`;
   $('sideBtn').setAttribute('aria-pressed', on);
 }
 function updateTween(dt) {
@@ -2459,7 +2800,7 @@ function enterPlay(m) {
   active = m;
   ui.prompt.hidden = true;
   viewIdx = 0; userOrbit = false;
-  $('viewBtn').textContent = '視点: 正面';
+  setViewLabel('視点: 正面');
   const v = m.view('front');
   refreshUI();
   startTween(v.pos, v.target, 1.0, () => {
@@ -2478,8 +2819,10 @@ function exitPlay() {
   const m = active;
   for (const n of [1, 2]) if (n === 1 ? m.b1 : m.b2) m.press(n, false);
   const stand = m.toWorld(new THREE.Vector3(0, 0, 1.15));
-  player.x = stand.x; player.z = stand.z; player.yaw = 0; player.pitch = -0.12;
-  const look = new THREE.Vector3(stand.x, EYE - 0.14, stand.z - 1.2);
+  // 台のほうを向いて立つ
+  const c = m.toWorld(new THREE.Vector3(0, 0, 0)), dx = c.x - stand.x, dz = c.z - stand.z, dl = Math.hypot(dx, dz);
+  player.x = stand.x; player.z = stand.z; player.yaw = Math.atan2(-dx, -dz); player.pitch = -0.12;
+  const look = new THREE.Vector3(stand.x + dx / dl * 1.2, EYE - 0.14, stand.z + dz / dl * 1.2);
   setHint('');
   startTween(new THREE.Vector3(stand.x, EYE, stand.z), look, 0.8, () => {
     active = null;
@@ -2499,7 +2842,7 @@ function switchMachine(dir) {
   autoSide = false; lastState = next.state;
   active = next;
   viewIdx = 0; userOrbit = false;
-  $('viewBtn').textContent = '視点: 正面';
+  setViewLabel('視点: 正面');
   refreshUI();
   const v = next.view('front');
   startTween(v.pos, v.target, 0.8, () => {
@@ -2519,7 +2862,7 @@ function cycleView() {
   userOrbit = false;
   const [name, label] = VIEW_ORDER[viewIdx];
   const v = active.view(name);
-  $('viewBtn').textContent = '視点: ' + label;
+  setViewLabel('視点: ' + label);
   startTween(v.pos, v.target, 0.8, () => { setMode('play'); controls.target.copy(v.target); controls.enabled = true; });
 }
 
@@ -2635,7 +2978,7 @@ $('sideBtn').addEventListener('click', () => setSideCam(!sideCamOn));
 $('prevBtn').addEventListener('click', () => switchMachine(-1));
 $('nextBtn').addEventListener('click', () => switchMachine(1));
 setSideCam(sideCamOn);
-function toggleMute() { sfx.init(); sfx.setMuted(!sfx.muted); $('muteBtn').textContent = sfx.muted ? '🔇' : '🔊'; }
+function toggleMute() { sfx.init(); sfx.setMuted(!sfx.muted); $('muteBtn').classList.toggle('muted', sfx.muted); }
 $('muteBtn').addEventListener('click', toggleMute);
 
 // キャンバス: 歩行中はドラッグで見回し・クリックで台を選ぶ。遊んでいる間は3Dボタンを直接押せる
@@ -2769,6 +3112,7 @@ function animate(dt) {
   }
   winFlash = Math.max(0, winFlash - dt);
   for (const m of machines) m.lightButtons(elapsed);
+  updateShadowSpot();
   if (active) { const [lv, pitch] = active.motorLevel(); sfx.motor(lv, pitch); } else sfx.motor(0, 1);
   finish.uniforms.uTime.value = elapsed % 100;
 }
@@ -2829,6 +3173,7 @@ async function boot() {
     game, machines, player, camera, controls, aim,
     get active() { return active; }, get mode() { return mode; }, get near() { return near; },
     enter(i) { enterPlay(machines[i]); },
+    exit() { exitPlay(); },
     finishTween() { if (tween) { tween.t = 1; updateTween(0); } },
     // 描画なしで遊んでいる台（または指定の台）のシミュレーションを進める
     sim(n, m = active) { for (let i = 0; i < n; i++) m.stepAll(H); m.sync(); },
