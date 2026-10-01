@@ -1768,7 +1768,7 @@ class RingHookMachine extends Machine {
       home: { x: -0.33, z: 0.30 }, range: { xMax: 0.33, zMin: -0.30 }, speed: 0.18,
       dropHint: '離すとリングが下りるよ',
       views: {
-        front: [[0, 0.44, 0.96], [0, 0.21, 0]],
+        front: [[0, 0.56, 0.9], [0, 0.32, 0]],
         side: [[0.42, 0.36, 0.6], [0, 0.2, 0]],
         top: [[0, 0.92, 0.55], [0, 0.18, 0]],
         depth: [[0.68, 0.46, 0.0], [0, 0.42, 0.0]],
@@ -1975,6 +1975,17 @@ class RingHookMachine extends Machine {
   isWin(b) { return b.position.y < -0.12; }
   aimOrigin() { return new THREE.Vector3(this.x, this.y - 0.03, this.z); }
   aimTargets() { return [this.boardVis, this.trayVis, ...this.prizes.map(p => p.group), ...this.aimSurfaces]; }
+  // 正面視点で映したい範囲（板・トレーと、リングの両方が入る箱）
+  frameRange() {
+    const r = this.ring.position, R = this.K.RING_R + 0.03;
+    // リングが手前にあるほど遠近で外側に大きく見えるので、その分広めに取る
+    const f = 1 / (1 - Math.max(0, Math.min(0.4, r.z)) / 1.1);
+    return {
+      x0: Math.min(-0.16, (r.x - R) * f), x1: Math.max(0.16, (r.x + R) * f),
+      y0: 0.04, y1: Math.max(r.y + R + 0.06, this.K.BOARD_Y + 0.1),
+      minDist: 0.85,
+    };
+  }
 
   setHead(h) {
     const pv = this.headPrev || { x: this.x, y: this.y, z: this.z };
@@ -2247,6 +2258,7 @@ function sideWanted(m) {
   return sideCamOn && (SIDE_STATES.includes(m.state) || (m.state === 'lift' && m.t < 0.7));
 }
 function toView(name, dur = 0.6) {
+  userOrbit = false;
   const idx = VIEW_ORDER.findIndex(v => v[0] === name);
   viewIdx = Math.max(0, idx);
   const v = active.view(name);
@@ -2269,6 +2281,24 @@ function autoCamera() {
   const ended = (m.state === 'idle' || m.state === 'ready1') && lastState && lastState !== 'idle' && lastState !== 'ready1';
   if (ended && !autoSide && !tween) toView('front', 0.7);
   lastState = m.state;
+}
+// 正面視点のとき、リングとトレーが両方入るようにカメラの高さと距離をなめらかに合わせる
+let userOrbit = false;
+controls.addEventListener('start', () => { userOrbit = true; });
+function followFrame(dt) {
+  const m = active;
+  if (mode !== 'play' || !m?.frameRange || tween || autoSide || userOrbit || viewIdx !== 0) return;
+  const r = m.frameRange();
+  const tanV = Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)), tanH = tanV * camera.aspect;
+  const halfH = (r.y1 - r.y0) / 2 + 0.03, halfW = (r.x1 - r.x0) / 2 + 0.03;
+  const dist = Math.min(1.8, Math.max(r.minDist, halfH / tanV, halfW / tanH));
+  const base = m.view('front');
+  const dir = base.pos.clone().sub(base.target).normalize();
+  const tgt = m.toWorld(new THREE.Vector3((r.x0 + r.x1) / 2, (r.y0 + r.y1) / 2, 0));
+  const pos = tgt.clone().addScaledVector(dir, dist);
+  const k = 1 - Math.exp(-dt * 2.5);
+  controls.target.lerp(tgt, k);
+  camera.position.lerp(pos, k);
 }
 function setSideCam(on) {
   sideCamOn = on;
@@ -2293,7 +2323,7 @@ function enterPlay(m) {
   keys.clear(); stick.x = stick.y = 0;
   active = m;
   ui.prompt.hidden = true;
-  viewIdx = 0;
+  viewIdx = 0; userOrbit = false;
   $('viewBtn').textContent = '視点: 正面';
   const v = m.view('front');
   refreshUI();
@@ -2333,7 +2363,7 @@ function switchMachine(dir) {
   if (next === m) return;
   autoSide = false; lastState = next.state;
   active = next;
-  viewIdx = 0;
+  viewIdx = 0; userOrbit = false;
   $('viewBtn').textContent = '視点: 正面';
   refreshUI();
   const v = next.view('front');
@@ -2351,6 +2381,7 @@ function switchMachine(dir) {
 function cycleView() {
   if (mode !== 'play' || autoSide || tween) return;
   viewIdx = (viewIdx + 1) % VIEW_ORDER.length;
+  userOrbit = false;
   const [name, label] = VIEW_ORDER[viewIdx];
   const v = active.view(name);
   $('viewBtn').textContent = '視点: ' + label;
@@ -2629,7 +2660,7 @@ function frame() {
   adaptResolution(dt);
   for (const m of machines) m.advance(dt);
   if (mode === 'walk' && started) updateWalk(dt);
-  else if (mode === 'play' && !tween && controls.enabled) controls.update();
+  else if (mode === 'play' && !tween && controls.enabled) { followFrame(dt); controls.update(); }
   autoCamera();
   updateAim();
   updateTween(dt);
