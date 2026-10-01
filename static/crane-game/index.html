@@ -53,7 +53,7 @@
   .chip:focus-visible, .pbtn:focus-visible, #go:focus-visible { outline: 2px solid var(--cyan); outline-offset: 2px; }
 
   #hint {
-    left: 50%; transform: translateX(-50%); top: calc(16px + env(safe-area-inset-top, 0px));
+    left: 50%; transform: translateX(-50%); top: calc(68px + env(safe-area-inset-top, 0px));
     background: var(--panel); border: 1px solid var(--panel-border);
     padding: 8px 18px; border-radius: 999px; font-weight: 800; font-size: 15px;
     white-space: nowrap; backdrop-filter: blur(8px);
@@ -281,7 +281,7 @@ let pixelRatio = MAX_PR;
 renderer.setPixelRatio(pixelRatio);
 renderer.setSize(innerWidth, innerHeight);
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 0.95;
+renderer.toneMappingExposure = 0.9;
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 RectAreaLightUniformsLib.init();
@@ -292,7 +292,7 @@ scene.fog = new THREE.FogExp2(0x0a0812, 0.04);
 
 const pmrem = new THREE.PMREMGenerator(renderer);
 scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
-scene.environmentIntensity = 0.32;
+scene.environmentIntensity = 0.18;
 
 const FOV_WALK = 62, FOV_PLAY = 42, FOV_DEPTH = 66;
 // 縦長画面では、カメラを後ろへ引く代わりに画角を広げて台の横幅を収める
@@ -461,6 +461,8 @@ function buttonTopTex(label, num, color) {
 // ============================================================
 const M = {
   chrome: new THREE.MeshStandardMaterial({ color: 0xe8e8ef, metalness: 1, roughness: 0.12 }),
+  // アームは鏡面だと天井の照明を映して眩しいので、少しつや消しの金属にする
+  clawMetal: new THREE.MeshStandardMaterial({ color: 0xaeb2bc, metalness: 0.85, roughness: 0.38, envMapIntensity: 0.6 }),
   brushed: new THREE.MeshStandardMaterial({ color: 0xbfc3cc, metalness: 1, roughness: 0.35 }),
   darkMetal: new THREE.MeshStandardMaterial({ color: 0x2a2a30, metalness: 0.8, roughness: 0.45 }),
   rubber: new THREE.MeshStandardMaterial({ color: 0x18181b, metalness: 0, roughness: 0.85 }),
@@ -470,8 +472,8 @@ const M = {
   felt: new THREE.MeshStandardMaterial({ map: feltTex, roughness: 1, metalness: 0 }),
   pit: new THREE.MeshStandardMaterial({ map: pitTex, roughness: 0.95 }),
   glass: new THREE.MeshPhysicalMaterial({
-    color: 0xffffff, metalness: 0, roughness: 0.03, transparent: true, opacity: 0.05,
-    specularIntensity: 0.35, envMapIntensity: 0.3, depthWrite: false,
+    color: 0xffffff, metalness: 0, roughness: 0.03, transparent: true, opacity: 0.03,
+    specularIntensity: 0.2, envMapIntensity: 0.15, depthWrite: false,
   }),
   acrylic: new THREE.MeshPhysicalMaterial({
     color: 0xe8f6ff, metalness: 0, roughness: 0.08, transparent: true, opacity: 0.28, envMapIntensity: 1.4, depthWrite: false,
@@ -734,7 +736,7 @@ function addObstacle(x0, x1, z0, z1) { obstacles.push({ x0, x1, z0, z1 }); }
   for (let i = 0; i <= 12; i++) zig.push([0.3 + i * 0.25, (i % 2 ? 0.15 : -0.15)]);
   neon(0x2ee6ff, zig, ([z, y]) => new THREE.Vector3(ROOM.x1 - 0.02, 1.1 + y, z));
 
-  scene.add(new THREE.HemisphereLight(0x8c7cff, 0x221133, 0.4));
+  scene.add(new THREE.HemisphereLight(0x8c7cff, 0x221133, 0.25));
   const key = new THREE.SpotLight(0xfff0e6, 26, 8, 0.8, 0.8, 2);
   key.position.set(0.3, ROOM_FLOOR + wallH - 0.1, 2.0); key.target.position.set(0.3, -0.2, 0);
   scene.add(key, key.target);
@@ -843,8 +845,10 @@ function boxPrizeMesh(hue, name) {
   g.add(mesh(new THREE.BoxGeometry(0.09, 0.12, 0.07), [side, side, side, side, face, face]));
   return g;
 }
+const BEAR_COM = 0.025;   // くまの重心（胴の中心から頭側へ）。中心のままだと寝た姿勢が安定せず勝手に起き上がる
 const PLUSH_KINDS = {
-  bear: () => bearMesh(pick(['#a8744a', '#f2a3bf', '#f3ece0', '#8fc0ee']), pick(['#e0245e', '#2a7de1', null])),
+  // 重心を頭側へ 2.5cm ずらした物理形状に合わせて、見た目も下げておく
+  bear: () => { const g = new THREE.Group(); const b = bearMesh(pick(['#a8744a', '#f2a3bf', '#f3ece0', '#8fc0ee']), pick(['#e0245e', '#2a7de1', null])); b.position.y = -BEAR_COM; g.add(b); return g; },
   mochi: () => mochiMesh(pick(['#ffd84a', '#9be3c8', '#ffffff', '#c7b3ff'])),
   cat: () => (Math.random() < 0.5 ? catMesh('#f0a050', '#c8742c') : catMesh('#a3a3aa', '#6d6d75')),
   box: () => boxPrizeMesh((Math.random() * 360) | 0, pick(['ねこ太郎', 'もちまる', 'くまきち'])),
@@ -853,11 +857,11 @@ function plushBody(kind) {
   const b = new CANNON.Body({
     mass: 0.12, material: kind === 'box' ? PM.box : PM.plush,
     collisionFilterGroup: G_PRIZE, collisionFilterMask: G_STATIC | G_CLAW | G_PRIZE,
-    linearDamping: 0.05, angularDamping: 0.25,
+    linearDamping: 0.05, angularDamping: 0.45,
   });
   if (kind === 'bear') {
-    b.addShape(new CANNON.Sphere(0.047), v3(0, 0, 0));
-    b.addShape(new CANNON.Sphere(0.04), v3(0, 0.072, 0.004));
+    b.addShape(new CANNON.Sphere(0.047), v3(0, -BEAR_COM, 0));
+    b.addShape(new CANNON.Sphere(0.04), v3(0, 0.072 - BEAR_COM, 0.004));
     b.mass = 0.13;
   } else if (kind === 'mochi') {
     b.addShape(new CANNON.Sphere(0.05)); b.mass = 0.1;
@@ -1197,7 +1201,7 @@ function buildShell(g, o) {
   // 照明
   if (o.lights) {
     [-0.2, 0.2].forEach((x, i) => {
-      const s = new THREE.SpotLight(0xfff3e6, 3.2, 2.6, 1.0, 0.75, 2);
+      const s = new THREE.SpotLight(0xfff3e6, 2.6, 2.6, 1.0, 0.75, 2);
       s.position.set(x, 0.985, 0.05); s.target.position.set(x, 0, 0.0);
       if (i === 0) {
         s.castShadow = true; s.shadow.mapSize.set(1024, 1024);
@@ -1206,7 +1210,7 @@ function buildShell(g, o) {
       }
       g.add(s, s.target);
     });
-    const ra = new THREE.RectAreaLight(0xfff3ea, 2.2, 0.82, 0.72);
+    const ra = new THREE.RectAreaLight(0xfff3ea, 1.3, 0.82, 0.72);
     ra.position.set(0, 0.995, 0); ra.lookAt(0, 0, 0); g.add(ra);
   }
   return out;
@@ -1329,7 +1333,7 @@ class Machine {
     if (this.inPlay && game.wins === this.winsAtPlay && active === this) { banner('ざんねん…', 'sad'); sfx.fail(); }
     this.inPlay = false;
     this.state = 'idle';
-    if (this.restock?.() && active === this) banner('店員さんが景品を補充しました', 'info');
+    if (this.restock?.() && active === this && this.restockNotice) banner('店員さんが景品を補充しました', 'info');
     if (this.credits > 0) this.beginPlay();
     else { this.hint(this.idleHint()); refreshUI(); }
   }
@@ -1446,6 +1450,7 @@ class ClawMachine extends Machine {
     this.sway = { x: 0, z: 0, vx: 0, vz: 0 };
     this.slack = 0; this.weak = 0.5; this.prev = null;
     this.landForce = 0; this.touching = new Map(); this.held = null;
+    this.restockNotice = true;   // ぬいぐるみの台は店員さんが補充する
     this.buildPhysics();
     this.buildClaw();
     this.aimSurfaces = [
@@ -1477,8 +1482,8 @@ class ClawMachine extends Machine {
     const K = this.K, g = this.group;
     this.gantry = buildGantry(g);
     const hub = this.hubVis = new THREE.Group();
-    const housing = mesh(new THREE.CylinderGeometry(0.036, 0.044, 0.07, 40), M.chrome); housing.position.y = 0.022; hub.add(housing);
-    const cap = mesh(new THREE.CylinderGeometry(0.02, 0.036, 0.02, 32), M.chrome); cap.position.y = 0.067; hub.add(cap);
+    const housing = mesh(new THREE.CylinderGeometry(0.036, 0.044, 0.07, 40), M.clawMetal); housing.position.y = 0.022; hub.add(housing);
+    const cap = mesh(new THREE.CylinderGeometry(0.02, 0.036, 0.02, 32), M.clawMetal); cap.position.y = 0.067; hub.add(cap);
     const ringM = mesh(new THREE.TorusGeometry(0.044, 0.004, 10, 40), paint(0xff3d8b)); ringM.rotation.x = Math.PI / 2; hub.add(ringM);
     const bottom = mesh(new THREE.CylinderGeometry(0.03, 0.026, 0.02, 32), M.darkMetal); bottom.position.y = -0.022; hub.add(bottom);
     const label = new THREE.Mesh(new THREE.CylinderGeometry(0.0445, 0.0445, 0.016, 40, 1, true, 0, Math.PI), new THREE.MeshStandardMaterial({
@@ -1493,9 +1498,9 @@ class ClawMachine extends Machine {
     this.prongVis = [];
     for (let i = 0; i < 3; i++) {
       const p = new THREE.Group();
-      const arm = mesh(armGeo, M.chrome); arm.position.y = -K.ARM / 2; p.add(arm);
+      const arm = mesh(armGeo, M.clawMetal); arm.position.y = -K.ARM / 2; p.add(arm);
       const kn = mesh(knuckleGeo, M.darkMetal); kn.rotation.x = Math.PI / 2; p.add(kn);
-      const kn2 = mesh(knuckleGeo, M.chrome); kn2.rotation.x = Math.PI / 2; kn2.position.y = -K.ARM; kn2.scale.set(0.8, 1, 0.8); p.add(kn2);
+      const kn2 = mesh(knuckleGeo, M.clawMetal); kn2.rotation.x = Math.PI / 2; kn2.position.y = -K.ARM; kn2.scale.set(0.8, 1, 0.8); p.add(kn2);
       const tip = mesh(tipGeo, M.rubber);
       tip.position.set(-Math.sin(K.TIP_ANG) * K.TIP / 2, -K.ARM - Math.cos(K.TIP_ANG) * K.TIP / 2, 0);
       tip.rotation.z = -K.TIP_ANG; p.add(tip);
@@ -1537,7 +1542,7 @@ class ClawMachine extends Machine {
     plan.forEach((kind, i) => {
       const [x, y, z] = cells[i];
       const body = plushBody(kind);
-      body.position.set(x + rnd(-0.02, 0.02), y, z + rnd(-0.02, 0.02));
+      body.position.set(x + rnd(-0.02, 0.02), y + (kind === 'bear' ? BEAR_COM : 0), z + rnd(-0.02, 0.02));
       body.quaternion.setFromEuler(rnd(-0.4, 0.4), rnd(0, Math.PI * 2), rnd(-0.4, 0.4));
       this.addPrize(kind, PLUSH_KINDS[kind](), body);
     });
@@ -1763,7 +1768,7 @@ class RingHookMachine extends Machine {
       home: { x: -0.33, z: 0.30 }, range: { xMax: 0.33, zMin: -0.30 }, speed: 0.18,
       dropHint: '離すとリングが下りるよ',
       views: {
-        front: [[0.2, 0.44, 0.96], [0, 0.21, 0]],
+        front: [[0, 0.44, 0.96], [0, 0.21, 0]],
         side: [[0.42, 0.36, 0.6], [0, 0.2, 0]],
         top: [[0, 0.92, 0.55], [0, 0.18, 0]],
         depth: [[0.68, 0.46, 0.0], [0, 0.42, 0.0]],
@@ -1954,7 +1959,9 @@ class RingHookMachine extends Machine {
     if (cur) return false;
     const level = Math.abs(this.tray.quaternion.x) < 0.004 && this.tray.angularVelocity.length() < 0.05 && Math.abs(this.board.position.y - this.K.BOARD_Y) < 0.003;
     if (!initial && !level) return false;
-    for (const p of this.prizes.filter(p => p.won)) this.removePrize(p);
+    // 取った景品は落下エリアに残す（多くなりすぎたら古いものから消す）
+    const won = this.prizes.filter(p => p.won);
+    while (won.length > 4) this.removePrize(won.shift());
     const kind = pick(['tissue', 'toilet', 'kitchen', 'detergent', 'dish', 'toothpaste']);
     const [w, h, d] = GOODS[kind].size;
     const body = goodsBody(kind);
