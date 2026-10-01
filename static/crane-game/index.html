@@ -283,7 +283,7 @@ const pmrem = new THREE.PMREMGenerator(renderer);
 scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
 scene.environmentIntensity = 0.32;
 
-const FOV_WALK = 62, FOV_PLAY = 42;
+const FOV_WALK = 62, FOV_PLAY = 42, FOV_DEPTH = 66;
 const camera = new THREE.PerspectiveCamera(FOV_WALK, innerWidth / innerHeight, 0.02, 40);
 camera.rotation.order = 'YXZ';
 
@@ -1382,6 +1382,7 @@ class Machine {
       front: [new THREE.Vector3(0, 0.72, 2.2), new THREE.Vector3(0, 0.40, 0)],
       side: [new THREE.Vector3(0.62, 0.42, 0.95), new THREE.Vector3(0, 0.2, -0.05)],
       top: [new THREE.Vector3(0.02, 1.55, 0.95), new THREE.Vector3(0, 0.12, 0)],
+      depth: [new THREE.Vector3(0.7, 0.46, 0.0), new THREE.Vector3(0, 0.40, 0.0)],
     }[name];
     let pos = v[0];
     if (name === 'front') {
@@ -1427,6 +1428,10 @@ class ClawMachine extends Machine {
     this.landForce = 0; this.touching = new Map(); this.held = null;
     this.buildPhysics();
     this.buildClaw();
+    this.aimSurfaces = [
+      aimPlane(this.group, -0.45, 0.45, 0.0005, -0.40, HOLE.z0), aimPlane(this.group, HOLE.x1, 0.45, 0.0005, HOLE.z0, 0.40),
+      aimPlane(this.group, -0.45, HOLE.x1, -0.659, HOLE.z0, 0.40),
+    ];
     this.spawn(17);
     this.settle(4);
     this.hint(this.idleHint());
@@ -1527,6 +1532,8 @@ class ClawMachine extends Machine {
     return true;
   }
   onBegin() { this.weak = Math.random() < 0.15 ? 1.0 : rnd(0.2, 0.7); }
+  aimOrigin() { return new THREE.Vector3(this.x + this.sway.x, this.y - 0.02, this.z + this.sway.z); }
+  aimTargets() { return [...this.prizes.map(p => p.group), ...this.aimSurfaces]; }
   onDrop() { this.slack = 0; this.setState('drop', ''); }
   isWin(b) { return b.position.y < -0.14; }
 
@@ -1739,6 +1746,7 @@ class RingHookMachine extends Machine {
         front: [[0.2, 0.44, 0.96], [0, 0.21, 0]],
         side: [[0.42, 0.36, 0.6], [0, 0.2, 0]],
         top: [[0, 0.92, 0.55], [0, 0.18, 0]],
+        depth: [[0.68, 0.46, 0.0], [0, 0.42, 0.0]],
       },
       shell: {
         base: 'pit', body: 0x13a89e, trim: 0xf7f7f2, signSide: 0x0b6e8c, interactive: true, lights: true, glow: 0x3ee6ff, hue: 0.47, stripSat: 0.9,
@@ -1760,6 +1768,7 @@ class RingHookMachine extends Machine {
     this.buildPhysics();
     this.buildStage();
     this.buildCrane();
+    this.aimSurfaces = [aimPlane(this.group, -0.45, 0.45, PIT_Y + 0.001, -0.40, 0.40)];
     this.restock(true);
     this.settle(3);
     this.hint(this.idleHint());
@@ -1937,6 +1946,8 @@ class RingHookMachine extends Machine {
   }
   onDrop() { this.stall = 0; this.setState('drop', ''); }
   isWin(b) { return b.position.y < -0.12; }
+  aimOrigin() { return new THREE.Vector3(this.x, this.y - 0.03, this.z); }
+  aimTargets() { return [this.boardVis, this.trayVis, ...this.prizes.map(p => p.group), ...this.aimSurfaces]; }
 
   setHead(h) {
     const pv = this.headPrev || { x: this.x, y: this.y, z: this.z };
@@ -2183,13 +2194,41 @@ function updateWalk(dt) {
   if (near) ui.promptText.textContent = `「${near.name}」で遊ぶ`;
 }
 
-function startTween(toP, toT, dur, after, toF = camera.fov) {
+function startTween(toP, toT, dur, after, toF = camera.fov, keepMode = false) {
   const fromP = camera.position.clone();
   const d = new THREE.Vector3(); camera.getWorldDirection(d);
-  const fromT = mode === 'play' ? controls.target.clone() : fromP.clone().add(d.multiplyScalar(1.2));
+  const fromT = mode === 'play' ? (tween ? tween.toT.clone() : controls.target.clone()) : fromP.clone().add(d.multiplyScalar(1.2));
   tween = { t: 0, dur, fromP, fromT, toP, toT, after, fromF: camera.fov, toF };
-  setMode('tween');
+  if (!keepMode) setMode('tween');
   controls.enabled = false;
+}
+// プレイ中のカメラ: 必要な範囲だけ回せる（正面から左右50°、真上と真横の手前まで、ズームは台が見える範囲）
+function limitControls(m) {
+  const front = m.view('front');
+  controls.minDistance = 0.6;
+  controls.maxDistance = Math.max(2.4, front.pos.distanceTo(front.target) * 1.15);
+  controls.minPolarAngle = 0.45;
+  controls.maxPolarAngle = 1.5;
+  controls.minAzimuthAngle = -0.85;
+  controls.maxAzimuthAngle = 0.85;
+}
+// ②を押している間は真横から見る（奥行きを合わせやすくする）。離すと元の視点に戻る
+let autoSide = false;
+function autoCamera() {
+  if (mode !== 'play' || !active) return;
+  const want = active.state === 'move2';
+  if (want && !autoSide) {
+    autoSide = true;
+    const v = active.view('depth');
+    $('viewBtn').textContent = '視点: 真横（②）';
+    startTween(v.pos, v.target, 0.45, () => {}, FOV_DEPTH, true);
+  } else if (!want && autoSide && !tween) {
+    autoSide = false;
+    const [name, label] = VIEW_ORDER[viewIdx];
+    const v = active.view(name);
+    $('viewBtn').textContent = '視点: ' + label;
+    startTween(v.pos, v.target, 0.6, () => { controls.target.copy(v.target); controls.enabled = true; }, FOV_PLAY, true);
+  }
 }
 function updateTween(dt) {
   if (!tween) return;
@@ -2214,6 +2253,7 @@ function enterPlay(m) {
   refreshUI();
   startTween(v.pos, v.target, 1.0, () => {
     setMode('play');
+    limitControls(m);
     controls.target.copy(v.target);
     controls.enabled = true;
     controls.update();
@@ -2222,6 +2262,7 @@ function enterPlay(m) {
 }
 function exitPlay() {
   if (!active || mode !== 'play') return;
+  autoSide = false; aim.visible = aimGlow.visible = aimGhost.visible = false;
   const m = active;
   for (const n of [1, 2]) if (n === 1 ? m.b1 : m.b2) m.press(n, false);
   const stand = m.toWorld(new THREE.Vector3(0, 0, 1.15));
@@ -2236,12 +2277,80 @@ function exitPlay() {
   }, FOV_WALK);
 }
 function cycleView() {
-  if (mode !== 'play') return;
+  if (mode !== 'play' || autoSide || tween) return;
   viewIdx = (viewIdx + 1) % VIEW_ORDER.length;
   const [name, label] = VIEW_ORDER[viewIdx];
   const v = active.view(name);
   $('viewBtn').textContent = '視点: ' + label;
   startTween(v.pos, v.target, 0.8, () => { setMode('play'); controls.target.copy(v.target); controls.enabled = true; });
+}
+
+// ============================================================
+// 照準ライト: アームの真下、一番上にある面に赤いLEDの点を落とす
+// ============================================================
+const aim = new THREE.Group();
+{
+  // 明るい床の上でも見えるよう、加算ではなく通常合成 + 暗いふちどり
+  const dotTex = canvasTex(128, 128, (g, w, h) => {
+    const c = w / 2;
+    let gr = g.createRadialGradient(c, c, 0, c, c, c);
+    gr.addColorStop(0, 'rgba(0,0,0,0)'); gr.addColorStop(0.42, 'rgba(0,0,0,0)');
+    gr.addColorStop(0.5, 'rgba(40,0,8,0.55)'); gr.addColorStop(0.62, 'rgba(255,20,50,0.35)'); gr.addColorStop(1, 'rgba(255,0,40,0)');
+    g.fillStyle = gr; g.fillRect(0, 0, w, h);
+    gr = g.createRadialGradient(c, c, 0, c, c, c * 0.45);
+    gr.addColorStop(0, 'rgba(255,255,255,1)'); gr.addColorStop(0.35, 'rgba(255,60,80,1)'); gr.addColorStop(1, 'rgba(230,0,30,1)');
+    g.fillStyle = gr; g.beginPath(); g.arc(c, c, c * 0.45, 0, Math.PI * 2); g.fill();
+  });
+  const mat = new THREE.MeshBasicMaterial({ map: dotTex, transparent: true, depthWrite: false, toneMapped: false, polygonOffset: true, polygonOffsetFactor: -4 });
+  const disc = new THREE.Mesh(new THREE.PlaneGeometry(0.05, 0.05), mat);
+  disc.rotation.x = -Math.PI / 2; disc.renderOrder = 5;
+  aim.add(disc);
+  aim.visible = false;
+  scene.add(aim);
+}
+// 正面のような低い角度からも見えるよう、カメラの方を向く光の点も重ねる
+const aimGlow = new THREE.Sprite(new THREE.SpriteMaterial({
+  map: canvasTex(64, 64, (g, w, h) => {
+    const gr = g.createRadialGradient(w / 2, h / 2, 0, w / 2, h / 2, w / 2);
+    gr.addColorStop(0, 'rgba(255,255,255,1)'); gr.addColorStop(0.25, 'rgba(255,70,90,1)'); gr.addColorStop(0.55, 'rgba(255,20,50,0.45)'); gr.addColorStop(1, 'rgba(255,0,40,0)');
+    g.fillStyle = gr; g.fillRect(0, 0, w, h);
+  }),
+  color: new THREE.Color(2.2, 1.6, 1.6), depthWrite: false, transparent: true,
+}));
+aimGlow.renderOrder = 6;
+scene.add(aimGlow);
+// 手前の景品に隠れても位置がわかるよう、うすい点を重ねて描く
+const aimGhost = new THREE.Sprite(aimGlow.material.clone());
+aimGhost.material.depthTest = false; aimGhost.material.opacity = 0.4;
+aimGhost.renderOrder = 7;
+scene.add(aimGhost);
+const aimRay = new THREE.Raycaster(), DOWN = new THREE.Vector3(0, -1, 0);
+const AIM_STATES = ['ready1', 'move1', 'ready2', 'move2', 'drop'];
+function updateAim() {
+  const m = active;
+  aim.visible = aimGlow.visible = aimGhost.visible = !!m && mode === 'play' && AIM_STATES.includes(m.state);
+  if (!aim.visible) return;
+  aimRay.set(m.toWorld(m.aimOrigin()), DOWN);
+  aimRay.far = 2;
+  const hit = aimRay.intersectObjects(m.aimTargets(), true)[0];
+  if (!hit) { aim.visible = aimGlow.visible = aimGhost.visible = false; return; }
+  const n = hit.face ? hit.face.normal.clone().transformDirection(hit.object.matrixWorld) : AX_Y.clone();
+  if (n.y < 0.3) n.copy(AX_Y);
+  aim.position.copy(hit.point).addScaledVector(n, 0.002);
+  aim.quaternion.setFromUnitVectors(AX_Y, n);
+  aim.scale.setScalar(1 + 0.12 * Math.sin(elapsed * 8));
+  // 面にめり込まないよう、少し浮かせてカメラ側へ寄せる
+  const toCam = camera.position.clone().sub(hit.point).normalize();
+  aimGlow.position.copy(hit.point).addScaledVector(n, 0.006).addScaledVector(toCam, 0.012);
+  aimGlow.scale.setScalar(0.055 * (1 + 0.15 * Math.sin(elapsed * 8)));
+  aimGhost.position.copy(aimGlow.position); aimGhost.scale.copy(aimGlow.scale);
+}
+// 照準用の見えない面（床など）
+function aimPlane(group, x0, x1, y, z0, z1) {
+  const m = new THREE.Mesh(new THREE.PlaneGeometry(x1 - x0, z1 - z0), new THREE.MeshBasicMaterial({ visible: false }));
+  m.rotation.x = -Math.PI / 2; m.position.set((x0 + x1) / 2, y, (z0 + z1) / 2);
+  group.add(m);
+  return m;
 }
 
 // ============================================================
@@ -2433,7 +2542,9 @@ function frame() {
   adaptResolution(dt);
   for (const m of machines) m.advance(dt);
   if (mode === 'walk' && started) updateWalk(dt);
-  else if (mode === 'play') controls.update();
+  else if (mode === 'play' && !tween && controls.enabled) controls.update();
+  autoCamera();
+  updateAim();
   updateTween(dt);
   for (const m of machines) m.sync();
   animate(dt);
@@ -2462,9 +2573,10 @@ async function boot() {
   });
   // デバッグ・テスト用
   window.__crane = {
-    game, machines, player, camera, controls,
+    game, machines, player, camera, controls, aim,
     get active() { return active; }, get mode() { return mode; }, get near() { return near; },
     enter(i) { enterPlay(machines[i]); },
+    finishTween() { if (tween) { tween.t = 1; updateTween(0); } },
     // 描画なしで遊んでいる台（または指定の台）のシミュレーションを進める
     sim(n, m = active) { for (let i = 0; i < n; i++) m.stepAll(H); m.sync(); },
   };
