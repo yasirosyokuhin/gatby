@@ -217,7 +217,7 @@
       <tr><td>↑ / ②</td><td>押している間、奥へ移動 → 離すと降下</td></tr>
       <tr><td>V / Esc</td><td>視点切替 / 台をはなれる</td></tr>
     </table>
-    <p><b>クレーンパラダイス</b>：3本爪でぬいぐるみをつかむ定番の台。<br><b>日用品リングフック</b>：チェーンの先のリングをL字フックに引っ掛けて板を倒す台。リングの揺れを読もう。</p>
+    <p><b>クレーンパラダイス</b>：3本爪でぬいぐるみをつかむ定番の台。<br><b>日用品リングフック</b>：チェーンの先のリングを板の金具フックに引っ掛けて持ち上げる台。リングの揺れを読もう。</p>
     <button id="go" disabled>読み込み中…</button>
     <p id="err"></p>
   </div>
@@ -395,7 +395,7 @@ const pegBackdrop = canvasTex(1024, 1330, (g, w, h) => {
   g.fillStyle = '#e03131'; g.font = `900 92px ${FONT}`; g.textAlign = 'center';
   g.fillText('日用品 GET!!', 0, -10);
   g.fillStyle = '#222'; g.font = `800 46px ${FONT}`;
-  g.fillText('リングをフックにかけて板をたおそう', 0, 75);
+  g.fillText('リングをフックにかけて板を持ち上げよう', 0, 75);
   g.restore();
   g.fillStyle = '#e03131'; g.font = `900 54px ${FONT}`; g.textAlign = 'center';
   g.fillText('1プレイ 100円', w / 2, 470);
@@ -551,6 +551,7 @@ const PM = {
   goods: new CANNON.Material('goods'),
   plate: new CANNON.Material('plate'),
   ring: new CANNON.Material('ring'),
+  guide: new CANNON.Material('guide'),
 };
 function makeWorld() {
   const w = new CANNON.World({ gravity: v3(0, -9.82, 0) });
@@ -578,10 +579,11 @@ function makeWorld() {
   cm(PM.ring, PM.stat, 0.3, 0.15);
   cm(PM.plate, PM.stat, 0.5, 0.0);
   cm(PM.plate, PM.plate, 0.3, 0.05);
+  cm(PM.plate, PM.guide, 0.0, 0.0);
   return w;
 }
-function staticBox(world, x0, x1, y0, y1, z0, z1) {
-  const b = new CANNON.Body({ mass: 0, material: PM.stat, collisionFilterGroup: G_STATIC, collisionFilterMask: G_PRIZE | G_CLAW });
+function staticBox(world, x0, x1, y0, y1, z0, z1, material = PM.stat) {
+  const b = new CANNON.Body({ mass: 0, material, collisionFilterGroup: G_STATIC, collisionFilterMask: G_PRIZE | G_CLAW });
   b.addShape(new CANNON.Box(v3((x1 - x0) / 2, (y1 - y0) / 2, (z1 - z0) / 2)));
   b.position.set((x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2);
   world.addBody(b);
@@ -1707,36 +1709,56 @@ class ClawMachine extends Machine {
 }
 
 // ============================================================
-// 台2: 日用品リングフック
-//  クレーンの先から下がったチェーンの先にリングがある。
-//  景品は透明な板に載っていて、板の手前に赤いL字フックが付いている。
-//  リングをフックに引っ掛けて持ち上げると板が後ろの蝶番を軸に起き上がり、
-//  景品が後ろへすべり落ちて GET。
+// 台2: 日用品リングフック（ゲームセンターの「フック設定」）
+//  クレーンの先はボールチェーン + 金属リング。
+//  2本の横棒の上に板が載っていて、板の中央に金具の「?」形フックが立っている。
+//  板の手前からチェーンが下の金網トレーにつながっている。
+//  リングをフックに掛けて板を持ち上げると、チェーンがトレーの手前を引き上げ、
+//  トレーが奥へ傾いて景品が落ちる。
 // ============================================================
+// 「?」形フックの中心線（板の上面からの局所座標）。
+// 巻きは手前（+z）に向かって伸びる。正面を向いたリングが前後に揺れると、この腕がリングの穴を通る。
+function hookCurve() {
+  const pts = [];
+  for (let i = 0; i <= 6; i++) pts.push(new THREE.Vector3(0, i * 0.005, 0));            // 立ち上がり
+  const cz = 0.018, cy = 0.034, r = 0.018;
+  for (let i = 1; i <= 16; i++) {                                                     // 上を回って下向きに巻く
+    const a = Math.PI - (i / 16) * (Math.PI + Math.PI / 4);
+    pts.push(new THREE.Vector3(0, cy + r * Math.sin(a), cz + r * Math.cos(a)));
+  }
+  return pts;
+}
+
 class RingHookMachine extends Machine {
   constructor(x) {
     super({
       name: '日用品リングフック', short: 'リングフック', x,
       home: { x: -0.33, z: 0.30 }, range: { xMax: 0.33, zMin: -0.30 }, speed: 0.18,
       dropHint: '離すとリングが下りるよ',
-      views: { front: [[0, 0.56, 1.36], [0, 0.26, -0.03]], side: [[0.5, 0.5, 0.78], [-0.02, 0.24, -0.04]], top: [[0, 1.0, 0.82], [0, 0.12, -0.04]] },
+      views: {
+        front: [[0.2, 0.44, 0.96], [0, 0.21, 0]],
+        side: [[0.42, 0.36, 0.6], [0, 0.2, 0]],
+        top: [[0, 0.92, 0.55], [0, 0.18, 0]],
+      },
       shell: {
         base: 'pit', body: 0x13a89e, trim: 0xf7f7f2, signSide: 0x0b6e8c, interactive: true, lights: true, glow: 0x3ee6ff, hue: 0.47, stripSat: 0.9,
         signTex: signTexture('RING HOOK', '★ 日用品リングフック ★', '#0fb5a5', '#2a9df4', '#1b4fd1'),
         backdrop: pegBackdrop, panel: ['#0b3d4a', '#145a6e'],
-        panelText: 'リングをL字フックにかけて板をたおすとGET！',
+        panelText: 'リングをフックにかけて板を持ち上げるとGET！',
       },
     });
     this.K = {
-      HEAD_TOP: 0.86, HEAD_DOWN: 0.395, DESC: 0.22, RISE: 0.16,
-      LINKS: 6, LINK: 0.034, RING_R: 0.04, RING_T: 0.0045,
-      LIFT_MAX: 7.0,     // 巻き上げモーターの限界 [N]。これを超えるとその場で止まる
-      PLATE_Y: 0.10, PLATE: [0.20, 0.012, 0.15],
+      HEAD_TOP: 0.78, HEAD_DOWN: 0.535, DESC: 0.22, RISE: 0.16,
+      LINKS: 6, LINK: 0.034, RING_R: 0.05, RING_T: 0.0045,
+      LIFT_MAX: 14.0,         // 巻き上げモーターの限界 [N]。これを超えるとその場で止まる
+      BOARD: [0.27, 0.012, 0.24], BOARD_Y: 0.20, ROD_Z: 0.085, ROD_R: 0.007,
+      TRAY: [0.30, 0.008, 0.20], TRAY_Y: 0.02,
+      ROPE_K: 900, ROPE_C: 8,  // 板とトレーをつなぐチェーン（引っ張るときだけ効くばね）
     };
     this.y = this.K.HEAD_TOP;
     this.tension = 0; this.stall = 0; this.hooked = false;
     this.buildPhysics();
-    this.buildStations();
+    this.buildStage();
     this.buildCrane();
     this.restock(true);
     this.settle(3);
@@ -1751,61 +1773,111 @@ class RingHookMachine extends Machine {
     staticBox(w, -0.49, -0.45, PIT_Y, 1.05, -0.44, 0.44);
     staticBox(w, -0.48, 0.48, 1.0, 1.06, -0.44, 0.44);
   }
-  // 景品台: 支柱 + 受け台 + 蝶番つきの透明プレート + 赤いL字フック
-  buildStations() {
-    const K = this.K, [pw, pt, pd] = K.PLATE, g = this.group;
-    this.stations = [];
-    const anchor = new CANNON.Body({ mass: 0, type: CANNON.Body.STATIC, collisionFilterGroup: 0, collisionFilterMask: 0 });
-    this.world.addBody(anchor);
-    const postGeo = new THREE.CylinderGeometry(0.012, 0.012, K.PLATE_Y - PIT_Y, 16);
-    const plateGeo = new RoundedBoxGeometry(pw, pt, pd, 2, 0.003);
-    const hookPostGeo = new THREE.CylinderGeometry(0.0042, 0.0042, 0.044, 14);
-    const hookArmGeo = new THREE.CylinderGeometry(0.0042, 0.0042, 0.042, 14);
-    const hookTipGeo = new THREE.SphereGeometry(0.0062, 16, 12);
-    const ARM_ANG = 25 * Math.PI / 180;
-    for (const z of [-0.20, 0.14]) for (const x of [-0.27, 0.0, 0.27]) {
-      // 支柱と受け台（静的）
-      const post = mesh(postGeo, M.chrome); post.position.set(x, (K.PLATE_Y + PIT_Y) / 2 - 0.009, z + 0.02); g.add(post);
-      boxMesh(x - 0.05, x + 0.05, K.PLATE_Y - pt / 2 - 0.012, K.PLATE_Y - pt / 2, z - 0.01, z + 0.05, M.darkMetal, g);
-      boxMesh(x - 0.03, x + 0.03, PIT_Y, PIT_Y + 0.01, z - 0.01, z + 0.05, M.darkMetal, g);
-      staticBox(this.world, x - 0.05, x + 0.05, K.PLATE_Y - pt / 2 - 0.012, K.PLATE_Y - pt / 2, z - 0.01, z + 0.05);
-      staticBox(this.world, x - 0.012, x + 0.012, PIT_Y, K.PLATE_Y - pt / 2 - 0.012, z + 0.008, z + 0.032);
-      // プレート（動的）
-      const plate = new CANNON.Body({ mass: 0.12, material: PM.plate, collisionFilterGroup: G_PRIZE, collisionFilterMask: G_STATIC | G_CLAW | G_PRIZE, angularDamping: 0.3 });
-      plate.addShape(new CANNON.Box(v3(pw / 2, pt / 2, pd / 2)));
-      // L字フック（板の手前寄り中央、腕は手前に向かって少し上向き）
-      const hz = 0.035, postTop = pt / 2 + 0.044;
-      plate.addShape(new CANNON.Box(v3(0.0045, 0.022, 0.0045)), v3(0, pt / 2 + 0.022, hz));
-      const aq = new CANNON.Quaternion(); aq.setFromAxisAngle(v3(1, 0, 0), -ARM_ANG);
-      const armC = [0, postTop + Math.sin(ARM_ANG) * 0.021, hz + Math.cos(ARM_ANG) * 0.021];
-      plate.addShape(new CANNON.Box(v3(0.0045, 0.0045, 0.021)), v3(...armC), aq);
-      const tipC = [0, postTop + Math.sin(ARM_ANG) * 0.042, hz + Math.cos(ARM_ANG) * 0.042];
-      plate.addShape(new CANNON.Sphere(0.0065), v3(...tipC));
-      plate.position.set(x, K.PLATE_Y, z);
-      this.world.addBody(plate);
-      const hinge = new CANNON.HingeConstraint(anchor, plate, {
-        pivotA: v3(x, K.PLATE_Y, z - pd / 2), axisA: v3(1, 0, 0),
-        pivotB: v3(0, 0, -pd / 2), axisB: v3(1, 0, 0),
-      });
-      this.world.addConstraint(hinge);
-      // 見た目
-      const pv = new THREE.Group();
-      const pm = mesh(plateGeo, M.acrylic, { cast: false }); pm.renderOrder = 2; pv.add(pm);
-      const hp = mesh(hookPostGeo, M.hookRed); hp.position.set(0, pt / 2 + 0.022, hz); pv.add(hp);
-      const ha = mesh(hookArmGeo, M.hookRed); ha.position.set(...armC); ha.rotation.x = Math.PI / 2 - ARM_ANG; pv.add(ha);
-      const ht = mesh(hookTipGeo, M.hookRed); ht.position.set(...tipC); pv.add(ht);
-      const base = mesh(new THREE.BoxGeometry(0.03, 0.008, 0.02), M.hookRed); base.position.set(0, pt / 2 + 0.004, hz); pv.add(base);
-      // 蝶番の金具
-      for (const s of [-1, 1]) { const hg = mesh(new THREE.CylinderGeometry(0.005, 0.005, 0.03, 12), M.chrome); hg.rotation.z = Math.PI / 2; hg.position.set(s * 0.06, 0, -pd / 2); pv.add(hg); }
-      mergeStatic(pv);
-      g.add(pv);
-      this.stations.push({ x, z, plate, vis: pv, prize: null });
+  // 横棒・板・フック・金網トレー
+  buildStage() {
+    const K = this.K, g = this.group, w = this.world;
+    const [bw, bt, bd] = K.BOARD, [tw, tt, td] = K.TRAY;
+    const rodTop = K.BOARD_Y - bt / 2;
+    const rodY = rodTop - K.ROD_R;
+    // 横棒（左右の柱に固定）と、板が横にずれないためのストッパー
+    const rodGeo = new THREE.CylinderGeometry(K.ROD_R, K.ROD_R, 0.9, 20);
+    for (const z of [-K.ROD_Z, K.ROD_Z]) {
+      const r = mesh(rodGeo, M.chrome); r.rotation.z = Math.PI / 2; r.position.set(0, rodY, z); g.add(r);
+      staticBox(w, -0.45, 0.45, rodY - K.ROD_R, rodTop, z - K.ROD_R, z + K.ROD_R);
+      for (const sx of [-1, 1]) {
+        const cx = sx * (bw / 2 + 0.018);
+        const col = mesh(new THREE.CylinderGeometry(0.011, 0.011, 0.016, 20), M.chrome);
+        col.rotation.z = Math.PI / 2; col.position.set(cx, rodY, z); g.add(col);
+        const stop = mesh(new THREE.CylinderGeometry(0.004, 0.004, 0.03, 10), M.chrome);
+        stop.position.set(cx, rodTop + 0.012, z); g.add(stop);
+        staticBox(w, cx - 0.006, cx + 0.006, rodTop, rodTop + 0.03, z - 0.006, z + 0.006, PM.guide);
+      }
+      // 柱に付けるブラケット
+      for (const sx of [-1, 1]) boxMesh(sx * 0.45 - 0.012, sx * 0.45 + 0.012, rodY - 0.03, rodY + 0.03, z - 0.02, z + 0.02, M.paintWhite, g, { round: 0.004 });
     }
+    // 板の前後ずれ止め（板の前後に立つガイドピン。持ち上がっても必ず横棒の上に戻る）
+    for (const sz of [-1, 1]) for (const sx of [-1, 1]) {
+      const px = sx * 0.09, pz = sz * (bd / 2 + 0.014);
+      const pin = mesh(new THREE.CylinderGeometry(0.004, 0.004, 0.07, 10), M.chrome);
+      pin.position.set(px, rodTop + 0.035, pz); g.add(pin);
+      const foot = mesh(new THREE.CylinderGeometry(0.004, 0.004, Math.abs(pz - sz * K.ROD_Z) + 0.01, 10), M.chrome);
+      foot.rotation.x = Math.PI / 2; foot.position.set(px, rodTop - 0.004, (pz + sz * K.ROD_Z) / 2); g.add(foot);
+      staticBox(w, px - 0.005, px + 0.005, rodTop, rodTop + 0.07, pz - 0.005, pz + 0.005, PM.guide);
+    }
+    // 板（動的）。中央に「?」形の金具フック
+    this.board = new CANNON.Body({ mass: 0.22, material: PM.plate, collisionFilterGroup: G_PRIZE, collisionFilterMask: G_STATIC | G_CLAW | G_PRIZE, angularDamping: 0.4, linearDamping: 0.05 });
+    this.board.addShape(new CANNON.Box(v3(bw / 2, bt / 2, bd / 2)));
+    const curve = hookCurve();
+    for (const p of curve) this.board.addShape(new CANNON.Sphere(0.0034), v3(p.x, bt / 2 + p.y, p.z));
+    this.board.position.set(0, K.BOARD_Y, 0);
+    // 中央のフックで吊られる板は水平のまま上下する（ガイドピンに挟まらないように回転させない）
+    this.board.fixedRotation = true; this.board.updateMassProperties();
+    w.addBody(this.board);
+    // 板の見た目
+    const bv = this.boardVis = new THREE.Group();
+    const face = canvasTex(540, 480, (c, W, Hh) => {
+      c.fillStyle = '#f2c230'; c.fillRect(0, 0, W, Hh);
+      c.strokeStyle = '#c98a00'; c.lineWidth = 18; c.strokeRect(9, 9, W - 18, Hh - 18);
+      c.fillStyle = '#ffffff'; c.strokeStyle = '#d18b00'; c.lineWidth = 12; c.lineJoin = 'round';
+      c.font = `900 120px ${FONT}`; c.textAlign = 'center';
+      c.strokeText('1発GET!!', W / 2, 400); c.fillText('1発GET!!', W / 2, 400);
+      c.fillStyle = '#e03131'; c.font = `900 56px ${FONT}`;
+      c.fillText('フックにかけて', W / 2, 110); c.fillText('持ち上げろ！', W / 2, 180);
+    });
+    const faceM = new THREE.MeshStandardMaterial({ map: face, roughness: 0.7, color: 0xc8c8c8 });
+    const edgeM = new THREE.MeshStandardMaterial({ color: 0xc9a020, roughness: 0.7 });
+    const boardMesh = mesh(new THREE.BoxGeometry(bw, bt, bd), [edgeM, edgeM, faceM, edgeM, edgeM, edgeM]);
+    bv.add(boardMesh);
+    const hook = mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(curve), 48, 0.0028, 10, false), M.chrome);
+    hook.position.y = bt / 2; bv.add(hook);
+    const tipBall = ball(0.0034, M.chrome, curve[curve.length - 1].x, bt / 2 + curve[curve.length - 1].y, 0); bv.add(tipBall);
+    const plateM = mesh(new THREE.CylinderGeometry(0.012, 0.014, 0.004, 24), M.chrome); plateM.position.y = bt / 2 + 0.002; bv.add(plateM);
+    g.add(bv);
+
+    // 金網トレー（奥の辺に蝶番。手前は受け台に載っている）
+    const anchor = new CANNON.Body({ mass: 0, type: CANNON.Body.STATIC, collisionFilterGroup: 0, collisionFilterMask: 0 });
+    w.addBody(anchor);
+    this.tray = new CANNON.Body({ mass: 0.2, material: PM.plate, collisionFilterGroup: G_PRIZE, collisionFilterMask: G_STATIC | G_CLAW | G_PRIZE, angularDamping: 0.5 });
+    this.tray.addShape(new CANNON.Box(v3(tw / 2, tt / 2, td / 2)));
+    for (const sx of [-1, 1]) this.tray.addShape(new CANNON.Box(v3(0.004, 0.012, td / 2)), v3(sx * (tw / 2 - 0.004), tt / 2 + 0.012, 0));
+    this.tray.addShape(new CANNON.Box(v3(tw / 2, 0.012, 0.004)), v3(0, tt / 2 + 0.012, td / 2 - 0.004));   // 手前のふち
+    this.tray.position.set(0, K.TRAY_Y, 0);
+    w.addBody(this.tray);
+    w.addConstraint(new CANNON.HingeConstraint(anchor, this.tray, {
+      pivotA: v3(0, K.TRAY_Y, -td / 2), axisA: v3(1, 0, 0), pivotB: v3(0, 0, -td / 2), axisB: v3(1, 0, 0),
+    }));
+    // 手前の受け台と支柱
+    staticBox(w, -0.12, 0.12, K.TRAY_Y - tt / 2 - 0.01, K.TRAY_Y - tt / 2, td / 2 - 0.05, td / 2 - 0.01);
+    boxMesh(-0.12, 0.12, K.TRAY_Y - tt / 2 - 0.01, K.TRAY_Y - tt / 2, td / 2 - 0.05, td / 2 - 0.01, M.darkMetal, g);
+    for (const sx of [-1, 1]) {
+      const post = mesh(new THREE.CylinderGeometry(0.008, 0.008, K.TRAY_Y - PIT_Y, 14), M.chrome);
+      post.position.set(sx * 0.1, (K.TRAY_Y + PIT_Y) / 2 - 0.01, td / 2 - 0.03); g.add(post);
+      const hp = mesh(new THREE.CylinderGeometry(0.008, 0.008, K.TRAY_Y - PIT_Y, 14), M.chrome);
+      hp.position.set(sx * 0.13, (K.TRAY_Y + PIT_Y) / 2 - 0.01, -td / 2); g.add(hp);
+    }
+    // 金網の見た目
+    const tv = this.trayVis = new THREE.Group();
+    const wire = new THREE.MeshStandardMaterial({ color: 0xf4f4f4, roughness: 0.4, metalness: 0.3 });
+    const wx = new THREE.CylinderGeometry(0.0018, 0.0018, tw, 6), wz = new THREE.CylinderGeometry(0.0018, 0.0018, td, 6);
+    for (let i = 0; i <= 10; i++) { const m = mesh(wx, wire); m.rotation.z = Math.PI / 2; m.position.set(0, 0, -td / 2 + i * td / 10); tv.add(m); }
+    for (let i = 0; i <= 14; i++) { const m = mesh(wz, wire); m.rotation.x = Math.PI / 2; m.position.set(-tw / 2 + i * tw / 14, 0.002, 0); tv.add(m); }
+    for (const sx of [-1, 1]) { const m = mesh(new THREE.CylinderGeometry(0.0025, 0.0025, td, 8), wire); m.rotation.x = Math.PI / 2; m.position.set(sx * (tw / 2 - 0.004), 0.024, 0); tv.add(m); }
+    const lip = mesh(new THREE.CylinderGeometry(0.0025, 0.0025, tw, 8), wire); lip.rotation.z = Math.PI / 2; lip.position.set(0, 0.024, td / 2 - 0.004); tv.add(lip);
+    mergeStatic(tv);
+    g.add(tv);
+
+    // 板の手前とトレーの手前をつなぐチェーン
+    this.ropeA = v3(0, -bt / 2, 0.04);              // 板の局所座標
+    this.ropeB = v3(0, tt / 2, td / 2 - 0.04);                 // トレーの局所座標
+    const wa = this.board.position.vadd(this.ropeA), wb = this.tray.position.vadd(this.ropeB);
+    this.ropeLen = wa.vsub(wb).length() + 0.004;
+    this.beads = new THREE.InstancedMesh(new THREE.SphereGeometry(0.0032, 10, 8), M.chrome, 120);
+    this.beads.castShadow = true; this.beads.frustumCulled = false;
+    g.add(this.beads);
   }
   buildCrane() {
     const K = this.K, g = this.group;
     this.gantry = buildGantry(g);
-    // ヘッド（キネマティック。チェーンの吊り元）
     this.head = new CANNON.Body({ mass: 0, type: CANNON.Body.KINEMATIC, collisionFilterGroup: 0, collisionFilterMask: 0 });
     this.head.position.set(this.x, this.y, this.z);
     this.world.addBody(this.head);
@@ -1813,13 +1885,9 @@ class RingHookMachine extends Machine {
     this.headVis.add(mesh(new RoundedBoxGeometry(0.07, 0.05, 0.07, 2, 0.008), M.darkMetal));
     const lamp = mesh(new THREE.CylinderGeometry(0.012, 0.012, 0.006, 20), new THREE.MeshBasicMaterial({ color: new THREE.Color(0x3ee6ff).multiplyScalar(3) }));
     lamp.position.set(0, 0, 0.036); lamp.rotation.x = Math.PI / 2; this.headVis.add(lamp);
-    const eye = mesh(new THREE.TorusGeometry(0.006, 0.0018, 8, 16), M.chrome); eye.position.y = -0.03; eye.rotation.x = Math.PI / 2; this.headVis.add(eye);
     g.add(this.headVis);
-    // チェーン
+    // ボールチェーン（質点を距離拘束でつなぐ）
     this.links = [];
-    const linkGeo = new THREE.TorusGeometry(0.0062, 0.0017, 8, 18);
-    this.linkVis = [];
-    // 回転の影響を受けないよう、各コマは質点として距離拘束でつなぐ
     let y = this.y - 0.03 - K.LINK / 2;
     for (let i = 0; i < K.LINKS; i++) {
       const b = new CANNON.Body({ mass: 0.012, material: PM.ring, collisionFilterGroup: G_CLAW, collisionFilterMask: G_STATIC | G_PRIZE, linearDamping: 0.08 });
@@ -1830,12 +1898,12 @@ class RingHookMachine extends Machine {
       if (i === 0) this.world.addConstraint(new CANNON.PointToPointConstraint(this.head, v3(0, -0.03 - K.LINK / 2, 0), b, v3(0, 0, 0)));
       else this.world.addConstraint(new CANNON.DistanceConstraint(this.links[i - 1], b, K.LINK));
       this.links.push(b);
-      const lv = mesh(linkGeo, M.chrome); lv.scale.set(1, 2.4, 1); g.add(lv); this.linkVis.push(lv);
       y -= K.LINK;
     }
-    // リング（輪を14個の箱で近似）。最後のコマの中心から半コマ下が輪の上端
+    this.headJoint = this.world.constraints[this.world.constraints.length - K.LINKS];
+    // 金属リング
     const R = K.RING_R, n = 14;
-    this.ring = new CANNON.Body({ mass: 0.03, material: PM.ring, collisionFilterGroup: G_CLAW, collisionFilterMask: G_STATIC | G_PRIZE, linearDamping: 0.06, angularDamping: 0.3 });
+    this.ring = new CANNON.Body({ mass: 0.035, material: PM.ring, collisionFilterGroup: G_CLAW, collisionFilterMask: G_STATIC | G_PRIZE, linearDamping: 0.06, angularDamping: 0.3 });
     const segHalf = R * Math.sin(Math.PI / n) + 0.0012;
     for (let i = 0; i < n; i++) {
       const a = (i / n) * Math.PI * 2;
@@ -1845,41 +1913,52 @@ class RingHookMachine extends Machine {
     this.ring.position.set(this.x, y + K.LINK / 2 - R, this.z);
     this.world.addBody(this.ring);
     this.world.addConstraint(new CANNON.PointToPointConstraint(this.links[K.LINKS - 1], v3(0, 0, 0), this.ring, v3(0, R + K.LINK / 2, 0)));
-    this.ringVis = mesh(new THREE.TorusGeometry(R, K.RING_T, 14, 48), M.ringYellow);
+    this.ringVis = mesh(new THREE.TorusGeometry(R, K.RING_T, 14, 48), M.chrome);
     g.add(this.ringVis);
-    this.headJoint = this.world.constraints[this.world.constraints.length - K.LINKS - 1];
+    this.chainBeads = new THREE.InstancedMesh(new THREE.SphereGeometry(0.0036, 10, 8), M.chrome, 80);
+    this.chainBeads.castShadow = true; this.chainBeads.frustumCulled = false;
+    g.add(this.chainBeads);
   }
-  // 空いた板に景品を載せる（initial: 最初の配置）
+  // 景品は1つ。取られたら、トレーが元に戻ってから次を置く
   restock(initial = false) {
-    const empty = this.stations.filter(s => !s.prize || s.prize.won);
-    if (!initial && empty.length < 4) return false;
-    // 板が傾いたまま・揺れているときは補充しない（次のプレイの後にもう一度見る）
-    const level = s => Math.abs(s.plate.quaternion.x) < 0.004 && s.plate.angularVelocity.length() < 0.05;
-    if (!initial && !empty.every(level)) return false;
+    const cur = this.prizes.find(p => !p.won);
+    if (cur) return false;
+    const level = Math.abs(this.tray.quaternion.x) < 0.004 && this.tray.angularVelocity.length() < 0.05 && Math.abs(this.board.position.y - this.K.BOARD_Y) < 0.003;
+    if (!initial && !level) return false;
     for (const p of this.prizes.filter(p => p.won)) this.removePrize(p);
-    const kinds = Object.keys(GOODS);
-    for (const s of empty) {
-      const kind = pick(kinds);
-      const [w, h, d] = GOODS[kind].size;
-      const body = goodsBody(kind);
-      // 板の後ろ寄りに置く
-      const pz = s.z - 0.072 + d / 2 + 0.008;
-      body.position.set(s.x + rnd(-0.01, 0.01), this.K.PLATE_Y + this.K.PLATE[1] / 2 + h / 2 + 0.001, Math.min(pz, s.z));
-      body.quaternion.setFromEuler(0, rnd(-0.08, 0.08), 0);
-      s.prize = this.addPrize(kind, GOODS[kind].build(), body);
-    }
+    const kind = pick(['tissue', 'toilet', 'kitchen', 'detergent', 'dish', 'toothpaste']);
+    const [w, h, d] = GOODS[kind].size;
+    const body = goodsBody(kind);
+    body.position.set(rnd(-0.01, 0.01), this.K.TRAY_Y + this.K.TRAY[1] / 2 + h / 2 + 0.001, -0.01);
+    body.quaternion.setFromEuler(0, rnd(-0.1, 0.1), 0);
+    this.addPrize(kind, GOODS[kind].build(), body);
     this.awake = 4;
     return true;
   }
   onDrop() { this.stall = 0; this.setState('drop', ''); }
-  isWin(b) { return b.position.y < PIT_Y + 0.2 && b.position.y < this.K.PLATE_Y - 0.12; }
+  isWin(b) { return b.position.y < -0.12; }
 
-  // 目標位置に置き、速度は前ステップの目標との差分から与える（拘束が正しく働くように）
   setHead(h) {
     const pv = this.headPrev || { x: this.x, y: this.y, z: this.z };
     this.head.velocity.set((this.x - pv.x) / h, (this.y - pv.y) / h, (this.z - pv.z) / h);
     this.head.position.set(this.x, this.y, this.z);
     this.headPrev = { x: this.x, y: this.y, z: this.z };
+  }
+  // 板とトレーをつなぐチェーン: たるんでいるときは何もせず、張ったら引き合う
+  rope() {
+    const K = this.K;
+    const wa = this.board.pointToWorldFrame(this.ropeA), wb = this.tray.pointToWorldFrame(this.ropeB);
+    const d = wa.vsub(wb), len = d.length();
+    this.ropeTaut = len > this.ropeLen;
+    if (!this.ropeTaut) return;
+    d.scale(1 / len, d);
+    const ra = wa.vsub(this.board.position), rb = wb.vsub(this.tray.position);
+    const va = this.board.velocity.vadd(this.board.angularVelocity.cross(ra));
+    const vb = this.tray.velocity.vadd(this.tray.angularVelocity.cross(rb));
+    const rel = va.vsub(vb).dot(d);
+    const f = Math.max(0, K.ROPE_K * (len - this.ropeLen) + K.ROPE_C * rel);
+    this.board.applyForce(d.scale(-f), ra);
+    this.tray.applyForce(d.scale(f), rb);
   }
   step(h) {
     const K = this.K;
@@ -1900,7 +1979,12 @@ class RingHookMachine extends Machine {
         if (this.y >= K.HEAD_TOP || this.stall > 1.5) { this.y = Math.min(this.y, K.HEAD_TOP); this.setState('top'); }
         break;
       case 'top':
-        if (this.t > 0.3) this.setState('return');
+        // 板を吊ったままなら、いったん下ろして板を横棒に戻す（リングは手前へ動くと腕から抜ける）
+        if (this.t > 0.4) this.setState(this.board.position.y > K.BOARD_Y + 0.01 ? 'lower' : 'return');
+        break;
+      case 'lower':
+        this.y = Math.max(K.HEAD_DOWN + 0.02, this.y - K.DESC * h);
+        if (this.y <= K.HEAD_DOWN + 0.02 && this.t > 0.6) this.setState('return');
         break;
       case 'return': {
         let done;
@@ -1910,53 +1994,78 @@ class RingHookMachine extends Machine {
       }
       case 'rest':
         this.y = Math.min(K.HEAD_TOP, this.y + K.RISE * h);
-        if (this.t > 0.6) this.finishPlay();
+        if (this.t > 0.6 && this.y >= K.HEAD_TOP) this.finishPlay();
         break;
     }
+    // 安全装置: 異常な張力が続いたらリングを外す
+    this.overload = this.tension > 22 ? (this.overload ?? 0) + h : 0;
+    if (this.overload > 0.4) { this.ring.collisionFilterMask = G_STATIC; this.popTimer = 0.6; this.overload = 0; }
+    if (this.popTimer > 0 && (this.popTimer -= h) <= 0) this.ring.collisionFilterMask = G_STATIC | G_PRIZE;
     this.moveGantry(tvx, tvz, h);
     this.setHead(h);
+    this.rope();
+    this.ringTwist();
+  }
+  // チェーンのねじれ剛性: リングは正面を向こうとする（振り子の揺れは自由）
+  ringTwist() {
+    const r = this.ring, n = r.quaternion.vmult(v3(0, 0, 1));
+    const k = 0.0006, c = 0.00004;
+    const err = Math.atan2(n.x, n.z);     // 鉛直軸まわりのずれ
+    const wrapped = Math.atan2(Math.sin(2 * err), Math.cos(2 * err)) / 2;   // 表裏どちら向きでもよい
+    r.torque.y += -k * wrapped - c * r.angularVelocity.y;
   }
   afterStep() {
     let f = 0;
     for (const eq of this.headJoint.equations) f += Math.abs(eq.multiplier);
     this.tension += (f - this.tension) * 0.2;
-    // リングがフックに掛かっているか（効果音用）
-    let hookedNow = false;
-    for (const ce of this.world.contacts) {
-      const a = ce.bi, b = ce.bj;
-      if ((a === this.ring && b.material === PM.plate) || (b === this.ring && a.material === PM.plate)) {
-        const plate = a === this.ring ? b : a;
-        if (plate.quaternion.x < -0.05 || plate.quaternion.x > 0.05) hookedNow = true;
+    // 板が持ち上がった瞬間に音を鳴らす
+    const lifted = this.board.position.y > this.K.BOARD_Y + 0.01;
+    if (lifted && !this.hooked) this.S.plink();
+    this.hooked = lifted;
+  }
+  // 点列に沿ってビーズを並べる（ボールチェーンの見た目）
+  beadsAlong(inst, pts, spacing) {
+    const m = new THREE.Matrix4();
+    let n = 0;
+    for (let i = 0; i < pts.length - 1 && n < inst.count; i++) {
+      const a = pts[i], b = pts[i + 1], len = a.distanceTo(b);
+      const k = Math.max(1, Math.round(len / spacing));
+      for (let j = 0; j < k && n < inst.count; j++) {
+        m.makeTranslation(a.x + (b.x - a.x) * j / k, a.y + (b.y - a.y) * j / k, a.z + (b.z - a.z) * j / k);
+        inst.setMatrixAt(n++, m);
       }
     }
-    if (hookedNow && !this.hooked) this.S.plink();
-    this.hooked = hookedNow;
+    inst.count = n;
+    inst.instanceMatrix.needsUpdate = true;
   }
   sync() {
     this.syncPrizes();
-    for (const s of this.stations) { s.vis.position.copy(s.plate.position); s.vis.quaternion.copy(s.plate.quaternion); }
+    this.boardVis.position.copy(this.board.position); this.boardVis.quaternion.copy(this.board.quaternion);
+    this.trayVis.position.copy(this.tray.position); this.trayVis.quaternion.copy(this.tray.quaternion);
     this.headVis.position.set(this.x, this.y, this.z);
     this.gantry.carriage.position.set(this.x, 0.935, this.z);
     this.gantry.bridge.position.x = this.x;
     placeCable(this.gantry.cable, this.x, this.z, new THREE.Vector3(this.x, this.y + 0.025, this.z));
-    // チェーンの見た目: 前後のつなぎ目を結ぶ向きに輪を並べ、1つおきに90°ねじる
-    const joints = [new THREE.Vector3(this.x, this.y - 0.03, this.z)];
-    for (const b of this.links) joints.push(new THREE.Vector3(b.position.x, b.position.y, b.position.z));
+    // クレーンのボールチェーン
     const rq = this.ring.quaternion, rp = this.ring.position;
     const ringTop = new THREE.Vector3(0, this.K.RING_R, 0).applyQuaternion(new THREE.Quaternion(rq.x, rq.y, rq.z, rq.w)).add(new THREE.Vector3(rp.x, rp.y, rp.z));
-    joints.push(ringTop);
-    const twist = new THREE.Quaternion();
-    for (let i = 0; i < this.links.length; i++) {
-      const a = joints[i].clone().lerp(joints[i + 1], 0.5), b = joints[i + 1].clone().lerp(joints[i + 2], 0.5);
-      const lv = this.linkVis[i];
-      lv.position.copy(joints[i + 1]);
-      const dir = b.clone().sub(a);
-      if (dir.lengthSq() < 1e-10) dir.set(0, -1, 0);
-      lv.quaternion.setFromUnitVectors(AX_Y, dir.normalize());
-      if (i % 2) lv.quaternion.multiply(twist.setFromAxisAngle(AX_Y, Math.PI / 2));
-    }
+    const pts = [new THREE.Vector3(this.x, this.y - 0.025, this.z), ...this.links.map(b => new THREE.Vector3(b.position.x, b.position.y, b.position.z)), ringTop];
+    this.chainBeads.count = 80;
+    this.beadsAlong(this.chainBeads, pts, 0.0075);
     this.ringVis.position.set(rp.x, rp.y, rp.z);
     this.ringVis.quaternion.set(rq.x, rq.y, rq.z, rq.w);
+    // 板とトレーをつなぐチェーン（たるんでいるときは少し垂らす）
+    const wa = this.board.pointToWorldFrame(this.ropeA), wb = this.tray.pointToWorldFrame(this.ropeB);
+    const A = new THREE.Vector3(wa.x, wa.y, wa.z), B = new THREE.Vector3(wb.x, wb.y, wb.z);
+    const slack = Math.max(0, this.ropeLen - A.distanceTo(B));
+    const mid = A.clone().lerp(B, 0.5).add(new THREE.Vector3(0, 0, Math.min(0.03, slack * 0.7)));
+    const rp2 = [];
+    for (let i = 0; i <= 12; i++) {
+      const t = i / 12;
+      rp2.push(new THREE.Vector3().addScaledVector(A, (1 - t) ** 2).addScaledVector(mid, 2 * t * (1 - t)).addScaledVector(B, t * t));
+    }
+    this.beads.count = 120;
+    this.beadsAlong(this.beads, rp2, 0.0075);
   }
   motorLevel() {
     const moving = Math.min(1, (Math.abs(this.vx) + Math.abs(this.vz)) / 0.05);
