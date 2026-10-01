@@ -3193,7 +3193,7 @@ async function boot() {
   });
   // デバッグ・テスト用
   window.__crane = {
-    game, machines, player, camera, controls, aim,
+    game, machines, player, camera, controls, aim, renderer, composer, scene,
     get active() { return active; }, get mode() { return mode; }, get near() { return near; },
     enter(i) { enterPlay(machines[i]); },
     exit() { exitPlay(); },
