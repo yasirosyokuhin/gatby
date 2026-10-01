@@ -1889,9 +1889,9 @@ class RingHookMachine extends Machine {
     this.K = {
       HEAD_TOP: 0.78, HEAD_DOWN: 0.535, DESC: 0.22, RISE: 0.16,
       LINKS: 6, LINK: 0.034, RING_R: 0.05, RING_T: 0.0045,
-      LIFT_MAX: 14.0,         // 巻き上げモーターの限界 [N]。これを超えるとその場で止まる
+      LIFT_MAX: 28.0,         // 巻き上げモーターの限界 [N]。これを超えるとその場で止まる
       BOARD: [0.27, 0.012, 0.24], BOARD_Y: 0.20, ROD_Z: 0.085, ROD_R: 0.007,
-      TRAY: [0.30, 0.008, 0.20], TRAY_Y: 0.02,
+      TRAY: [0.30, 0.008, 0.20], TRAY_Y: -0.06,   // 景品の上に横棒・板とのすき間を十分とる
       ROPE_K: 900, ROPE_C: 8,  // 板とトレーをつなぐチェーン（引っ張るときだけ効くばね）
     };
     this.y = this.K.HEAD_TOP;
@@ -1952,6 +1952,8 @@ class RingHookMachine extends Machine {
     this.board.position.set(0, K.BOARD_Y, 0);
     // 中央のフックで吊られる板は水平のまま上下する（ガイドピンに挟まらないように回転させない）
     this.board.fixedRotation = true; this.board.updateMassProperties();
+    // ガイドピンに沿って上下にだけ動く（持ち上げた板が横にずれて横棒から落ちないように）
+    this.board.linearFactor.set(0, 1, 0);
     w.addBody(this.board);
     // 板の見た目
     const bv = this.boardVis = new THREE.Group();
@@ -1974,26 +1976,26 @@ class RingHookMachine extends Machine {
     const plateM = mesh(new THREE.CylinderGeometry(0.012, 0.014, 0.004, 24), M.chrome); plateM.position.y = bt / 2 + 0.002; bv.add(plateM);
     g.add(bv);
 
-    // 金網トレー（奥の辺に蝶番。手前は受け台に載っている）
+    // 金網トレー（手前の辺に蝶番。奥は受け台に載っている）。奥が引き上げられると景品は手前へすべり落ちる
     const anchor = new CANNON.Body({ mass: 0, type: CANNON.Body.STATIC, collisionFilterGroup: 0, collisionFilterMask: 0 });
     w.addBody(anchor);
     this.tray = new CANNON.Body({ mass: 0.2, material: PM.plate, collisionFilterGroup: G_PRIZE, collisionFilterMask: G_STATIC | G_CLAW | G_PRIZE, angularDamping: 0.5 });
     this.tray.addShape(new CANNON.Box(v3(tw / 2, tt / 2, td / 2)));
     for (const sx of [-1, 1]) this.tray.addShape(new CANNON.Box(v3(0.004, 0.012, td / 2)), v3(sx * (tw / 2 - 0.004), tt / 2 + 0.012, 0));
-    this.tray.addShape(new CANNON.Box(v3(tw / 2, 0.012, 0.004)), v3(0, tt / 2 + 0.012, td / 2 - 0.004));   // 手前のふち
+    this.tray.addShape(new CANNON.Box(v3(tw / 2, 0.012, 0.004)), v3(0, tt / 2 + 0.012, -td / 2 + 0.004));   // 奥のふち
     this.tray.position.set(0, K.TRAY_Y, 0);
     w.addBody(this.tray);
     w.addConstraint(new CANNON.HingeConstraint(anchor, this.tray, {
-      pivotA: v3(0, K.TRAY_Y, -td / 2), axisA: v3(1, 0, 0), pivotB: v3(0, 0, -td / 2), axisB: v3(1, 0, 0),
+      pivotA: v3(0, K.TRAY_Y, td / 2), axisA: v3(1, 0, 0), pivotB: v3(0, 0, td / 2), axisB: v3(1, 0, 0),
     }));
-    // 手前の受け台と支柱
-    staticBox(w, -0.12, 0.12, K.TRAY_Y - tt / 2 - 0.01, K.TRAY_Y - tt / 2, td / 2 - 0.05, td / 2 - 0.01);
-    boxMesh(-0.12, 0.12, K.TRAY_Y - tt / 2 - 0.01, K.TRAY_Y - tt / 2, td / 2 - 0.05, td / 2 - 0.01, M.darkMetal, g);
+    // 奥の受け台と支柱（蝶番側の支柱は手前）
+    staticBox(w, -0.12, 0.12, K.TRAY_Y - tt / 2 - 0.01, K.TRAY_Y - tt / 2, -td / 2 + 0.01, -td / 2 + 0.05);
+    boxMesh(-0.12, 0.12, K.TRAY_Y - tt / 2 - 0.01, K.TRAY_Y - tt / 2, -td / 2 + 0.01, -td / 2 + 0.05, M.darkMetal, g);
     for (const sx of [-1, 1]) {
       const post = mesh(new THREE.CylinderGeometry(0.008, 0.008, K.TRAY_Y - PIT_Y, 14), M.chrome);
-      post.position.set(sx * 0.1, (K.TRAY_Y + PIT_Y) / 2 - 0.01, td / 2 - 0.03); g.add(post);
+      post.position.set(sx * 0.1, (K.TRAY_Y + PIT_Y) / 2 - 0.01, -td / 2 + 0.03); g.add(post);
       const hp = mesh(new THREE.CylinderGeometry(0.008, 0.008, K.TRAY_Y - PIT_Y, 14), M.chrome);
-      hp.position.set(sx * 0.13, (K.TRAY_Y + PIT_Y) / 2 - 0.01, -td / 2); g.add(hp);
+      hp.position.set(sx * 0.13, (K.TRAY_Y + PIT_Y) / 2 - 0.01, td / 2); g.add(hp);
     }
     // 金網の見た目
     const tv = this.trayVis = new THREE.Group();
@@ -2002,13 +2004,13 @@ class RingHookMachine extends Machine {
     for (let i = 0; i <= 10; i++) { const m = mesh(wx, wire); m.rotation.z = Math.PI / 2; m.position.set(0, 0, -td / 2 + i * td / 10); tv.add(m); }
     for (let i = 0; i <= 14; i++) { const m = mesh(wz, wire); m.rotation.x = Math.PI / 2; m.position.set(-tw / 2 + i * tw / 14, 0.002, 0); tv.add(m); }
     for (const sx of [-1, 1]) { const m = mesh(new THREE.CylinderGeometry(0.0025, 0.0025, td, 8), wire); m.rotation.x = Math.PI / 2; m.position.set(sx * (tw / 2 - 0.004), 0.024, 0); tv.add(m); }
-    const lip = mesh(new THREE.CylinderGeometry(0.0025, 0.0025, tw, 8), wire); lip.rotation.z = Math.PI / 2; lip.position.set(0, 0.024, td / 2 - 0.004); tv.add(lip);
+    const lip = mesh(new THREE.CylinderGeometry(0.0025, 0.0025, tw, 8), wire); lip.rotation.z = Math.PI / 2; lip.position.set(0, 0.024, -td / 2 + 0.004); tv.add(lip);
     mergeStatic(tv);
     g.add(tv);
 
     // 板の手前とトレーの手前をつなぐチェーン
-    this.ropeA = v3(0, -bt / 2, 0.04);              // 板の局所座標
-    this.ropeB = v3(0, tt / 2, td / 2 - 0.04);                 // トレーの局所座標
+    this.ropeA = v3(0, -bt / 2, -0.04);             // 板の局所座標
+    this.ropeB = v3(0, tt / 2, -td / 2 + 0.04);                // トレーの局所座標（奥寄り）
     const wa = this.board.position.vadd(this.ropeA), wb = this.tray.position.vadd(this.ropeB);
     this.ropeLen = wa.vsub(wb).length() + 0.004;
     this.beads = new THREE.InstancedMesh(new THREE.SphereGeometry(0.0032, 10, 8), M.chrome, 120);
@@ -2078,7 +2080,7 @@ class RingHookMachine extends Machine {
     this.awake = 4;
     return true;
   }
-  onDrop() { this.stall = 0; this.setState('drop', ''); }
+  onDrop() { this.stall = 0; this.unlatch(); this.setState('drop', ''); }
   isWin(b) { return b.position.y < -0.12; }
   aimOrigin() { return new THREE.Vector3(this.x, this.y - 0.03, this.z); }
   aimTargets() { return [this.boardVis, this.trayVis, ...this.prizes.map(p => p.group), ...this.aimSurfaces]; }
@@ -2089,11 +2091,12 @@ class RingHookMachine extends Machine {
     const f = 1 / (1 - Math.max(0, Math.min(0.4, r.z)) / 1.1);
     return {
       x0: Math.min(-0.16, (r.x - R) * f), x1: Math.max(0.16, (r.x + R) * f),
-      y0: 0.04, y1: Math.max(r.y + R + 0.06, this.K.BOARD_Y + 0.1),
+      y0: -0.14, y1: Math.max(r.y + R + 0.06, this.K.BOARD_Y + 0.1),   // 下は画面下のボタンの分も空ける
       minDist: 0.85,
     };
   }
 
+  unlatch() { if (this.latch) { this.world.removeConstraint(this.latch); this.latch = null; } }
   setHead(h) {
     const pv = this.headPrev || { x: this.x, y: this.y, z: this.z };
     this.head.velocity.set((this.x - pv.x) / h, (this.y - pv.y) / h, (this.z - pv.z) / h);
@@ -2136,11 +2139,20 @@ class RingHookMachine extends Machine {
         break;
       case 'top':
         // 板を吊ったままなら、いったん下ろして板を横棒に戻す（リングは手前へ動くと腕から抜ける）
+        // 掛かっているときは景品が落ちるまで少し待つ。引っかかって残っていたら奥へ軽く押す
+        if (this.latch) {
+          const p = this.prizes.find(q => !q.won && q.body.position.y > -0.05);
+          if (p && this.t > 0.8 && !this.nudged) {
+            this.nudged = true;
+            p.body.wakeUp(); p.body.applyImpulse(v3(0, 0.05, 0.12).scale(p.body.mass), v3(0, 0, 0));
+          }
+          if (this.t < 1.6 && p) break;
+        }
         if (this.t > 0.4) this.setState(this.board.position.y > K.BOARD_Y + 0.01 ? 'lower' : 'return');
         break;
       case 'lower':
         this.y = Math.max(K.HEAD_DOWN + 0.02, this.y - K.DESC * h);
-        if (this.y <= K.HEAD_DOWN + 0.02 && this.t > 0.6) this.setState('return');
+        if (this.y <= K.HEAD_DOWN + 0.02 && this.t > 0.6) { this.unlatch(); this.setState('return'); }
         break;
       case 'return': {
         let done;
@@ -2154,9 +2166,11 @@ class RingHookMachine extends Machine {
         break;
     }
     // 安全装置: 異常な張力が続いたらリングを外す
-    this.overload = this.tension > 22 ? (this.overload ?? 0) + h : 0;
+    this.overload = this.tension > 45 ? (this.overload ?? 0) + h : 0;
     if (this.overload > 0.4) { this.ring.collisionFilterMask = G_STATIC; this.popTimer = 0.6; this.overload = 0; }
     if (this.popTimer > 0 && (this.popTimer -= h) <= 0) this.ring.collisionFilterMask = G_STATIC | G_PRIZE;
+    // 待っている間にトレーが戻っていれば次の景品を置く（空のトレーで遊ばせない）
+    if (['idle', 'ready1', 'ready2'].includes(this.state) && !this.prizes.some(p => !p.won)) this.restock();
     this.moveGantry(tvx, tvz, h);
     this.setHead(h);
     this.rope();
@@ -2174,6 +2188,19 @@ class RingHookMachine extends Machine {
     let f = 0;
     for (const eq of this.headJoint.equations) f += Math.abs(eq.multiplier);
     this.tension += (f - this.tension) * 0.2;
+    // リングがフックに掛かって板が持ち上がり始めたら、リングと板をつなぐ。
+    // 途中で外れて「掛かったのに取れない」ことがないよう、上まで必ず持ち上げる
+    if (!this.latch && this.state === 'lift' && this.board.position.y > this.K.BOARD_Y + 0.012) {
+      for (const ce of this.world.contacts) {
+        const a = ce.bi, b = ce.bj;
+        if (!((a === this.ring && b === this.board) || (a === this.board && b === this.ring))) continue;
+        const wp = a.position.vadd(ce.ri);
+        const joint = new CANNON.PointToPointConstraint(this.ring, this.ring.pointToLocalFrame(wp), this.board, this.board.pointToLocalFrame(wp));
+        this.world.addConstraint(joint);
+        this.latch = joint; this.nudged = false;
+        break;
+      }
+    }
     // 板が持ち上がった瞬間に音を鳴らす
     const lifted = this.board.position.y > this.K.BOARD_Y + 0.01;
     if (lifted && !this.hooked) this.S.plink();
