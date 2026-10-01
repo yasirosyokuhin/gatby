@@ -103,7 +103,15 @@
   body.touch.mode-walk #stick { display: block; }
   body.touch #prompt kbd { display: none; }
 
-  body.mode-walk #controls, body.mode-walk #viewBtn, body.mode-walk #leaveBtn { display: none; }
+  body.mode-walk #controls, body.mode-walk #viewBtn, body.mode-walk #leaveBtn, body.mode-walk #sideBtn { display: none; }
+  .edge {
+    position: fixed; z-index: 2; top: 50%; transform: translateY(-50%); width: 40px; height: 72px;
+    font: inherit; font-size: 34px; font-weight: 800; line-height: 1; color: rgba(255,255,255,0.85); cursor: pointer;
+    background: rgba(14,10,26,0.35); border: 1px solid rgba(255,255,255,0.12); backdrop-filter: blur(6px);
+  }
+  #prevBtn { left: 0; border-radius: 0 14px 14px 0; }
+  #nextBtn { right: 0; border-radius: 14px 0 0 14px; }
+  body:not(.mode-play) .edge { display: none; }
   body.mode-play #prompt, body.mode-play #crosshair { display: none; }
   body.mode-tween #controls, body.mode-tween #prompt, body.mode-tween #crosshair { display: none; }
 
@@ -187,6 +195,7 @@
 <div id="topRight" class="hud">
   <button class="chip" id="leaveBtn" title="Esc キー">← 台をはなれる</button>
   <button class="chip" id="viewBtn" title="V キー">視点: 正面</button>
+  <button class="chip" id="sideBtn" aria-pressed="true" title="②を押したとき真横から見る">横カメラ: ON</button>
   <button class="chip" id="muteBtn" title="M キー" aria-label="ミュート切替">🔊</button>
 </div>
 <div id="hint" class="hud"></div>
@@ -194,6 +203,8 @@
 <div id="banner" class="hud"></div>
 <button id="prompt" hidden><kbd>E</kbd><span id="promptText"></span></button>
 <div id="stick"><div id="knob"></div></div>
+<button class="edge" id="prevBtn" aria-label="前の台">‹</button>
+<button class="edge" id="nextBtn" aria-label="次の台">›</button>
 <div id="controls" class="hud">
   <button class="pbtn" id="coin">100円<small>投入 (C)</small></button>
   <button class="pbtn off" id="b1">→<small>① (→)</small></button>
@@ -277,14 +288,21 @@ RectAreaLightUniformsLib.init();
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x07060c);
-scene.fog = new THREE.FogExp2(0x0a0812, 0.12);
+scene.fog = new THREE.FogExp2(0x0a0812, 0.04);
 
 const pmrem = new THREE.PMREMGenerator(renderer);
 scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
 scene.environmentIntensity = 0.32;
 
 const FOV_WALK = 62, FOV_PLAY = 42, FOV_DEPTH = 66;
-const camera = new THREE.PerspectiveCamera(FOV_WALK, innerWidth / innerHeight, 0.02, 40);
+// 縦長画面では、カメラを後ろへ引く代わりに画角を広げて台の横幅を収める
+function fovFor(base, max = 95) {
+  const a = innerWidth / innerHeight;
+  if (a >= 1) return base;
+  const tanH = Math.tan(THREE.MathUtils.degToRad(base / 2));
+  return Math.min(max, THREE.MathUtils.radToDeg(2 * Math.atan(tanH / a)));
+}
+const camera = new THREE.PerspectiveCamera(fovFor(FOV_WALK, 85), innerWidth / innerHeight, 0.02, 40);
 camera.rotation.order = 'YXZ';
 
 const controls = new OrbitControls(camera, canvas);
@@ -452,8 +470,8 @@ const M = {
   felt: new THREE.MeshStandardMaterial({ map: feltTex, roughness: 1, metalness: 0 }),
   pit: new THREE.MeshStandardMaterial({ map: pitTex, roughness: 0.95 }),
   glass: new THREE.MeshPhysicalMaterial({
-    color: 0xffffff, metalness: 0, roughness: 0.03, transparent: true, opacity: 0.08,
-    specularIntensity: 1, envMapIntensity: 1.6, depthWrite: false,
+    color: 0xffffff, metalness: 0, roughness: 0.03, transparent: true, opacity: 0.05,
+    specularIntensity: 0.35, envMapIntensity: 0.3, depthWrite: false,
   }),
   acrylic: new THREE.MeshPhysicalMaterial({
     color: 0xe8f6ff, metalness: 0, roughness: 0.08, transparent: true, opacity: 0.28, envMapIntensity: 1.4, depthWrite: false,
@@ -1385,10 +1403,12 @@ class Machine {
       depth: [new THREE.Vector3(0.7, 0.46, 0.0), new THREE.Vector3(0, 0.40, 0.0)],
     }[name];
     let pos = v[0];
-    if (name === 'front') {
-      // 縦長画面では筐体全体が収まるように引く
-      const k = Math.max(1, 1.25 / camera.aspect);
-      pos = v[1].clone().add(v[0].clone().sub(v[1]).multiplyScalar(k));
+    const a = innerWidth / innerHeight;
+    if (name === 'front' && a < 1) {
+      // 縦長画面: 台の横幅（約1.1m）がちょうど収まる距離まで寄る（設計上の距離より遠くはしない）
+      const tanH = Math.tan(THREE.MathUtils.degToRad(fovFor(FOV_PLAY) / 2)) * a;
+      const dir = v[0].clone().sub(v[1]), dist = dir.length();
+      pos = v[1].clone().add(dir.multiplyScalar(Math.min(dist, 0.58 / tanH) / dist));
     }
     return { pos: this.toWorld(pos), target: this.toWorld(v[1]) };
   }
@@ -2212,23 +2232,42 @@ function limitControls(m) {
   controls.minAzimuthAngle = -0.85;
   controls.maxAzimuthAngle = 0.85;
 }
-// ②を押している間は真横から見る（奥行きを合わせやすくする）。離すと元の視点に戻る
-let autoSide = false;
+// 横カメラ: ②を押すと真横から見る。下りてつかみ、少し上がるまで横のまま、その後は正面に戻って見届ける
+let autoSide = false, sideCamOn = true, lastState = '';
+try { sideCamOn = localStorage.getItem('sideCam') !== 'off'; } catch (_) { /* 保存できない環境では既定のまま */ }
+const SIDE_STATES = ['move2', 'drop', 'grab', 'hold', 'wait'];
+function sideWanted(m) {
+  return sideCamOn && (SIDE_STATES.includes(m.state) || (m.state === 'lift' && m.t < 0.7));
+}
+function toView(name, dur = 0.6) {
+  const idx = VIEW_ORDER.findIndex(v => v[0] === name);
+  viewIdx = Math.max(0, idx);
+  const v = active.view(name);
+  $('viewBtn').textContent = '視点: ' + VIEW_ORDER[viewIdx][1];
+  startTween(v.pos, v.target, dur, () => { controls.target.copy(v.target); controls.enabled = true; }, fovFor(FOV_PLAY), true);
+}
 function autoCamera() {
   if (mode !== 'play' || !active) return;
-  const want = active.state === 'move2';
+  const m = active, want = sideWanted(m);
   if (want && !autoSide) {
     autoSide = true;
-    const v = active.view('depth');
-    $('viewBtn').textContent = '視点: 真横（②）';
-    startTween(v.pos, v.target, 0.45, () => {}, FOV_DEPTH, true);
+    const v = m.view('depth');
+    $('viewBtn').textContent = '視点: 真横';
+    startTween(v.pos, v.target, 0.45, () => {}, fovFor(FOV_DEPTH), true);
   } else if (!want && autoSide && !tween) {
     autoSide = false;
-    const [name, label] = VIEW_ORDER[viewIdx];
-    const v = active.view(name);
-    $('viewBtn').textContent = '視点: ' + label;
-    startTween(v.pos, v.target, 0.6, () => { controls.target.copy(v.target); controls.enabled = true; }, FOV_PLAY, true);
+    toView('front', 0.7);
   }
+  // 1プレイが終わったら正面に戻す（手で回したカメラも戻す）
+  const ended = (m.state === 'idle' || m.state === 'ready1') && lastState && lastState !== 'idle' && lastState !== 'ready1';
+  if (ended && !autoSide && !tween) toView('front', 0.7);
+  lastState = m.state;
+}
+function setSideCam(on) {
+  sideCamOn = on;
+  try { localStorage.setItem('sideCam', on ? 'on' : 'off'); } catch (_) { /* 保存できなくても動作は変わらない */ }
+  $('sideBtn').textContent = '横カメラ: ' + (on ? 'ON' : 'OFF');
+  $('sideBtn').setAttribute('aria-pressed', on);
 }
 function updateTween(dt) {
   if (!tween) return;
@@ -2257,8 +2296,9 @@ function enterPlay(m) {
     controls.target.copy(v.target);
     controls.enabled = true;
     controls.update();
+    lastState = m.state;
     m.hint(m.state === 'idle' ? m.idleHint() : '');
-  }, FOV_PLAY);
+  }, fovFor(FOV_PLAY));
 }
 function exitPlay() {
   if (!active || mode !== 'play') return;
@@ -2274,8 +2314,33 @@ function exitPlay() {
     setMode('walk');
     walkHint();
     refreshUI();
-  }, FOV_WALK);
+  }, fovFor(FOV_WALK, 85));
 }
+// 横スワイプ（または画面端の矢印）で隣の台へ。操作の途中では切り替えない
+function canSwitch() { return mode === 'play' && !tween && active && ['idle', 'ready1', 'ready2'].includes(active.state); }
+function switchMachine(dir) {
+  if (!canSwitch()) return;
+  const m = active;
+  for (const n of [1, 2]) if (n === 1 ? m.b1 : m.b2) m.press(n, false);
+  const next = machines[(machines.indexOf(m) + dir + machines.length) % machines.length];
+  if (next === m) return;
+  autoSide = false; lastState = next.state;
+  active = next;
+  viewIdx = 0;
+  $('viewBtn').textContent = '視点: 正面';
+  refreshUI();
+  const v = next.view('front');
+  startTween(v.pos, v.target, 0.8, () => {
+    setMode('play');
+    limitControls(next);
+    controls.target.copy(v.target);
+    controls.enabled = true;
+    controls.update();
+    next.hint(next.state === 'idle' ? next.idleHint() : '');
+  }, fovFor(FOV_PLAY));
+  setHint(next.name);
+}
+
 function cycleView() {
   if (mode !== 'play' || autoSide || tween) return;
   viewIdx = (viewIdx + 1) % VIEW_ORDER.length;
@@ -2371,6 +2436,8 @@ addEventListener('keydown', e => {
     else if ((e.code === 'KeyC' || e.code === 'Enter') && !e.repeat) active.insertCoin();
     else if (e.code === 'KeyV') cycleView();
     else if (e.code === 'Escape' || e.code === 'KeyQ') exitPlay();
+    else if (e.code === 'BracketLeft' || e.code === 'PageUp' || e.code === 'Comma') switchMachine(-1);
+    else if (e.code === 'BracketRight' || e.code === 'PageDown' || e.code === 'Period') switchMachine(1);
   }
 });
 addEventListener('keyup', e => {
@@ -2391,14 +2458,20 @@ $('coin').addEventListener('click', () => active?.insertCoin());
 ui.prompt.addEventListener('click', () => enterPlay(near));
 $('leaveBtn').addEventListener('click', exitPlay);
 $('viewBtn').addEventListener('click', cycleView);
+$('sideBtn').addEventListener('click', () => setSideCam(!sideCamOn));
+$('prevBtn').addEventListener('click', () => switchMachine(-1));
+$('nextBtn').addEventListener('click', () => switchMachine(1));
+setSideCam(sideCamOn);
 function toggleMute() { sfx.init(); sfx.setMuted(!sfx.muted); $('muteBtn').textContent = sfx.muted ? '🔇' : '🔊'; }
 $('muteBtn').addEventListener('click', toggleMute);
 
 // キャンバス: 歩行中はドラッグで見回し・クリックで台を選ぶ。遊んでいる間は3Dボタンを直接押せる
 const ray = new THREE.Raycaster(), ndc = new THREE.Vector2();
 let drag = null, heldBy3D = 0;
+let swipe = null;
 canvas.addEventListener('pointerdown', e => {
   if (!started) return;
+  if (mode === 'play') swipe = { id: e.pointerId, x: e.clientX, y: e.clientY, t: performance.now() };
   if (mode === 'play') {
     ndc.set((e.clientX / innerWidth) * 2 - 1, -(e.clientY / innerHeight) * 2 + 1);
     ray.setFromCamera(ndc, camera);
@@ -2437,8 +2510,13 @@ canvas.addEventListener('pointerup', e => {
     drag = null;
   }
 });
-addEventListener('pointerup', () => {
-  if (heldBy3D && active) { active.press(heldBy3D, false); heldBy3D = 0; controls.enabled = mode === 'play'; }
+addEventListener('pointerup', e => {
+  if (heldBy3D && active) { active.press(heldBy3D, false); heldBy3D = 0; controls.enabled = mode === 'play'; swipe = null; }
+  if (swipe && e.pointerId === swipe.id) {
+    const dx = e.clientX - swipe.x, dy = e.clientY - swipe.y, dt = performance.now() - swipe.t;
+    swipe = null;
+    if (dt < 700 && Math.abs(dx) > 60 && Math.abs(dx) > 2 * Math.abs(dy)) switchMachine(dx < 0 ? 1 : -1);
+  }
 });
 
 // バーチャルスティック（スマホ）
@@ -2465,7 +2543,7 @@ const rt = new THREE.WebGLRenderTarget(innerWidth, innerHeight, { type: THREE.Ha
 const composer = new EffectComposer(renderer, rt);
 composer.setPixelRatio(pixelRatio);
 composer.addPass(new RenderPass(scene, camera));
-const bloom = new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 0.45, 0.35, 2.4);
+const bloom = new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 0.3, 0.3, 2.6);
 composer.addPass(bloom);
 composer.addPass(new OutputPass());
 const finish = new ShaderPass({
@@ -2490,7 +2568,9 @@ const finish = new ShaderPass({
 composer.addPass(finish);
 
 addEventListener('resize', () => {
-  camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix();
+  camera.aspect = innerWidth / innerHeight;
+  if (!tween) camera.fov = mode === 'walk' ? fovFor(FOV_WALK, 85) : fovFor(autoSide ? FOV_DEPTH : FOV_PLAY);
+  camera.updateProjectionMatrix();
   renderer.setSize(innerWidth, innerHeight);
   composer.setSize(innerWidth, innerHeight);
   bloom.resolution.set(innerWidth, innerHeight);
