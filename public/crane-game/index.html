@@ -2077,7 +2077,7 @@ class ClawMachine extends Machine {
       case 'taiwan': this.spawnTaiwan(50, false); break;
       case 'bridge': this.spawnBridge(); break;
       case 'keychain': this.spawn(30); break;
-      case 'takoyaki': this.spawnBalls(36); this.newRound(); break;
+      case 'takoyaki': this.spawnBalls(56); this.newRound(); break;
       case 'dring': this.spawnDring(6); break;
       case 'ufo2': this.spawn(15); break;
       default: this.spawn(17);
@@ -2185,6 +2185,18 @@ class ClawMachine extends Machine {
     const w = this.world, g = this.group, T = TAKO, a = T.A / 2;
     staticBox(w, -0.45, 0.45, -0.04, 0, -0.40, 0.30);                         // 床
     boxMesh(-0.45, 0.45, -0.04, 0, -0.40, 0, M.felt.clone(), g, { cast: false }).material.color.set(0x3a6fd8);
+    // プールの奥と左右はゆるい坂（球がアームの届くまん中へ集まる）
+    const blue = M.felt.clone(); blue.color.set(0x2f5fc8);
+    const ramp = (cx, cy, cz, hx, hy, hz, ax, az) => {
+      const b = new CANNON.Body({ mass: 0, material: PM.stat, collisionFilterGroup: G_STATIC, collisionFilterMask: G_PRIZE | G_CLAW });
+      b.addShape(new CANNON.Box(v3(hx, hy, hz)));
+      b.position.set(cx, cy, cz); b.quaternion.setFromEuler(ax, 0, az);
+      w.addBody(b);
+      const m = mesh(new THREE.BoxGeometry(hx * 2, hy * 2, hz * 2), blue); m.position.set(cx, cy, cz); m.rotation.set(ax, 0, az); g.add(m);
+    };
+    ramp(0, 0.02, -0.355, 0.45, 0.01, 0.06, 0.45, 0);        // 奥
+    ramp(-0.405, 0.02, -0.2, 0.06, 0.01, 0.2, 0, -0.45);     // 左
+    ramp(0.405, 0.02, -0.2, 0.06, 0.01, 0.2, 0, 0.45);       // 右
     staticBox(w, -0.45, 0.45, 0, 0.06, -0.012, 0);                            // プールとプレートの仕切り
     boxMesh(-0.45, 0.45, 0, 0.06, -0.012, 0, M.acrylic, g, { cast: false }).renderOrder = 2;
     staticBox(w, -0.45, 0.45, 0, 0.07, 0.30, 0.312);                          // 手前のガード
@@ -2230,7 +2242,7 @@ class ClawMachine extends Machine {
       const b = new CANNON.Body({ mass: 0.0027, material: PM.ball, collisionFilterGroup: G_PRIZE, collisionFilterMask: G_STATIC | G_CLAW | G_PRIZE, linearDamping: 0.15, angularDamping: 0.2 });
       b.addShape(new CANNON.Sphere(PINGPONG_R));
       b.sleepSpeedLimit = 0.05; b.sleepTimeLimit = 0.4;
-      b.position.set(rnd(-0.42, 0.42), 0.03 + (i / 18 | 0) * 0.045 + rnd(0, 0.02), rnd(-0.37, -0.04));
+      b.position.set(rnd(-0.32, 0.32), 0.03 + (i / 14 | 0) * 0.045 + rnd(0, 0.02), rnd(-0.28, -0.04));
       this.addPrize('ball', pingBallMesh(), b);
     }
   }
@@ -2246,7 +2258,7 @@ class ClawMachine extends Machine {
   clearPlate() {
     for (const p of this.prizes) {
       if (p.kind !== 'ball' || (p.body.position.z < 0 && p.body.position.y > -0.1)) continue;
-      p.body.position.set(rnd(-0.42, 0.42), rnd(0.08, 0.2), rnd(-0.37, -0.05));
+      p.body.position.set(rnd(-0.32, 0.32), rnd(0.08, 0.2), rnd(-0.28, -0.05));
       p.body.velocity.setZero(); p.body.angularVelocity.setZero(); p.body.wakeUp();
     }
   }
