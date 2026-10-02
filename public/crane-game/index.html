@@ -123,7 +123,9 @@
   }
   #prevBtn { left: 0; border-radius: 0 14px 14px 0; }
   #nextBtn { right: 0; border-radius: 14px 0 0 14px; }
-  body:not(.mode-play) .edge { display: none; }
+  body:not(.mode-play) .edge, body.playing .edge { display: none; }
+  #fade { position: fixed; inset: 0; background: #000; opacity: 0; pointer-events: none; transition: opacity .22s ease; z-index: 50; }
+  #fade.on { opacity: 1; }
   body.mode-play #prompt, body.mode-play #crosshair { display: none; }
   body.mode-tween #controls, body.mode-tween #prompt, body.mode-tween #crosshair { display: none; }
 
@@ -216,6 +218,7 @@
 <div id="banner" class="hud"></div>
 <button id="prompt" hidden><kbd>E</kbd><span id="promptText"></span></button>
 <div id="stick"><div id="knob"></div></div>
+<div id="fade"></div>
 <button class="edge" id="prevBtn" aria-label="前の台">‹</button>
 <button class="edge" id="nextBtn" aria-label="次の台">›</button>
 <div id="controls" class="hud">
@@ -1224,7 +1227,7 @@ const game = { spent: 0, wins: 0 };
 const $ = id => document.getElementById(id);
 const ui = {
   machine: $('sMachine'), credit: $('sCredit'), spent: $('sSpent'), get: $('sGet'),
-  hint: $('hint'), banner: $('banner'), b1: $('b1'), b2: $('b2'), prompt: $('prompt'), promptText: $('promptText'),
+  hint: $('hint'), banner: $('banner'), b1: $('b1'), b2: $('b2'), prompt: $('prompt'), promptText: $('promptText'), fade: $('fade'),
 };
 let active = null;           // 遊んでいる台
 let winFlash = 0;
@@ -2728,9 +2731,8 @@ class RingHookMachine extends Machine {
     });
     // フックの腕の向き（0: 手前、-π/2: 左）。リングはどちらの台でも正面を向いて吊られる
     this.hookYaw = veg ? -Math.PI / 2 : 0;
-    // 左向きフックは横からだと掛かったか分かりにくいので、真横カメラは②で奥へ動かす間だけ。
-    // リングが下り始めたら正面に戻し、リングがフックの腕に掛かるところを正面から見せる
-    if (veg) this.sideStates = ['move2'];
+    // 真横カメラは②で奥へ動かす間だけ。リングが下り始めたら、フックとリングに寄った斜め上からの視点にする
+    this.sideStates = ['move2'];
     this.goodsKinds = veg ? ['melon', 'cabbage', 'onion', 'carrot', 'potato'] : ['tissue', 'toilet', 'kitchen', 'detergent', 'dish', 'toothpaste'];
     this.K = {
       HEAD_TOP: 0.78, HEAD_DOWN: 0.535, DESC: 0.22, RISE: 0.16,
@@ -2929,6 +2931,15 @@ class RingHookMachine extends Machine {
   isWin(b) { return b.position.y < -0.12; }
   aimOrigin() { return new THREE.Vector3(this.x, this.y - 0.03, this.z); }
   aimTargets() { return [this.boardVis, this.trayVis, ...this.prizes.map(p => p.group), ...this.aimSurfaces]; }
+  closeWanted() { return this.state === 'drop' || this.state === 'wait' || (this.state === 'lift' && this.t < 1.0); }
+  // 寄りの視点: リングの真下あたり（フックとの間）を、手前右の斜め上から
+  view(name) {
+    if (name !== 'close') return super.view(name);
+    const r = this.ring.position, tx = r.x * 0.5, tz = r.z * 0.5;
+    const portrait = innerWidth < innerHeight ? 1.25 : 1;
+    const tgt = new THREE.Vector3(tx, 0.27, tz), pos = new THREE.Vector3(tx + 0.24 * portrait, 0.47, tz + 0.36 * portrait);
+    return { pos: this.toWorld(pos), target: this.toWorld(tgt) };
+  }
   // 正面視点で映したい範囲（板・トレーと、リングの両方が入る箱）
   frameRange() {
     const r = this.ring.position, R = this.K.RING_R + 0.03;
@@ -3249,14 +3260,20 @@ function toView(name, dur = 0.6) {
   setViewLabel('視点: ' + VIEW_ORDER[viewIdx][1]);
   startTween(v.pos, v.target, dur, () => { controls.target.copy(v.target); controls.enabled = true; }, fovFor(FOV_PLAY), true);
 }
+// 自動カメラ: ②で奥へ動かす間は真横（'depth'）、リングが下りて掛かるところは寄り（'close'）
+function autoWanted(m) {
+  if (!sideCamOn) return null;
+  if (m.closeWanted?.()) return 'close';
+  return sideWanted(m) ? 'depth' : null;
+}
 function autoCamera() {
   if (mode !== 'play' || !active) return;
-  const m = active, want = sideWanted(m);
-  if (want && !autoSide) {
-    autoSide = true;
-    const v = m.view('depth');
-    setViewLabel('視点: 真横');
-    startTween(v.pos, v.target, 0.45, () => {}, fovFor(FOV_DEPTH), true);
+  const m = active, want = autoWanted(m);
+  if (want && want !== autoSide) {
+    autoSide = want;
+    const v = m.view(want);
+    setViewLabel(want === 'close' ? '視点: フックに寄る' : '視点: 真横');
+    startTween(v.pos, v.target, want === 'close' ? 0.6 : 0.45, () => {}, fovFor(want === 'close' ? FOV_PLAY : FOV_DEPTH), true);
   } else if (!want && autoSide && !tween) {
     autoSide = false;
     toView('front', 0.7);
@@ -3341,7 +3358,8 @@ function exitPlay() {
   }, fovFor(FOV_WALK, 85));
 }
 // 横スワイプ（または画面端の矢印）で隣の台へ。操作の途中では切り替えない
-function canSwitch() { return mode === 'play' && !tween && active && ['idle', 'ready1', 'ready2'].includes(active.state); }
+// 台の切り替えは遊んでいないときだけ（コインを入れたら、そのプレイが終わるまで切り替えない）
+function canSwitch() { return mode === 'play' && !tween && active && active.state === 'idle'; }
 function switchMachine(dir) {
   if (!canSwitch()) return;
   const m = active;
@@ -3354,15 +3372,26 @@ function switchMachine(dir) {
   setViewLabel('視点: 正面');
   refreshUI();
   const v = next.view('front');
-  startTween(v.pos, v.target, 0.8, () => {
+  const arrive = () => {
     setMode('play');
     limitControls(next);
     controls.target.copy(v.target);
     controls.enabled = true;
     controls.update();
     next.hint(next.state === 'idle' ? next.idleHint() : '');
-  }, fovFor(FOV_PLAY));
+  };
   setHint(next.name);
+  // 同じ列なら横へすべるだけ。反対の列へ移るときは、カメラを回さずに一瞬暗転して切り替える
+  if (Math.abs(next.group.rotation.y - m.group.rotation.y) > 1) {
+    setMode('tween'); controls.enabled = false;
+    ui.fade.classList.add('on');
+    setTimeout(() => {
+      camera.position.copy(v.pos); camera.lookAt(v.target);
+      camera.fov = fovFor(FOV_PLAY); camera.updateProjectionMatrix();
+      arrive();
+      ui.fade.classList.remove('on');
+    }, 230);
+  } else startTween(v.pos, v.target, 0.6, arrive, fovFor(FOV_PLAY));
 }
 
 function cycleView() {
@@ -3620,6 +3649,7 @@ function animate(dt) {
     s.mat.color.copy(tmpCol);
   }
   winFlash = Math.max(0, winFlash - dt);
+  document.body.classList.toggle('playing', !!active && active.state !== 'idle');
   for (const m of machines) m.lightButtons(elapsed);
   updateShadowSpot();
   for (const m of machines) m.setFur(active ? active === m : Math.hypot(m.group.position.x - camera.position.x, m.group.position.z - camera.position.z) < 2.6);
