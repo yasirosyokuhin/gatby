@@ -667,6 +667,7 @@ const PM = {
   plate: new CANNON.Material('plate'),
   ring: new CANNON.Material('ring'),
   guide: new CANNON.Material('guide'),
+  ball: new CANNON.Material('ball'),
 };
 function makeWorld() {
   const w = new CANNON.World({ gravity: v3(0, -9.82, 0) });
@@ -696,6 +697,10 @@ function makeWorld() {
   cm(PM.plate, PM.stat, 0.5, 0.0);
   cm(PM.plate, PM.plate, 0.3, 0.05);
   cm(PM.plate, PM.guide, 0.0, 0.0);
+  // ピンポン球: 軽くてよくはずむ
+  cm(PM.ball, PM.stat, 0.3, 0.55);
+  cm(PM.ball, PM.ball, 0.2, 0.6);
+  cm(PM.ball, PM.claw, 0.9, 0.05);
   return w;
 }
 function staticBox(world, x0, x1, y0, y1, z0, z1, material = PM.stat) {
@@ -1500,13 +1505,13 @@ class Machine {
     return [tvx, tvz];
   }
   // ホームへ戻る（奥行き → 横の順）。止まる手前で減速する。到着したら true
-  returnHome(h) {
-    const dx = this.o.home.x - this.x, dz = this.o.home.z - this.z, s = this.o.speed;
+  returnHome(h, to = this.o.home) {
+    const dx = to.x - this.x, dz = to.z - this.z, s = this.o.speed;
     const sp = d => Math.min(s, Math.sqrt(2 * ACCEL * Math.abs(d)) + 0.004);
     if (Math.abs(dz) > 0.001) return [0, Math.sign(dz) * sp(dz), false];
     if (Math.abs(dx) > 0.001) return [Math.sign(dx) * sp(dx), 0, false];
     if (Math.abs(this.vx) + Math.abs(this.vz) > 0.01) return [0, 0, false];
-    this.x = this.o.home.x; this.z = this.o.home.z;
+    this.x = to.x; this.z = to.z;
     return [0, 0, true];
   }
   // 目標速度へ加減速しながら動かす（急発進・急停止で景品が振り落とされないように）
@@ -1526,6 +1531,11 @@ class Machine {
     if (this.credits > 0) this.beginPlay();
     else { this.hint(this.idleHint()); refreshUI(); }
   }
+  awardWin() {
+    game.wins++;
+    if (active === this) { banner('GET!!'); sfx.win(); winFlash = 3.0; }
+    refreshUI();
+  }
   checkWins() {
     let spilled = null;
     for (const p of this.prizes) {
@@ -1533,9 +1543,7 @@ class Machine {
         // 遊んでいないときに勝手に落ちた景品は、店員さんが台に戻す（GET にはならない）
         if (!this.inPlay && this.spillBack) { (spilled ??= []).push(p); continue; }
         p.won = true;
-        game.wins++;
-        if (active === this) { banner('GET!!'); sfx.win(); winFlash = 3.0; }
-        refreshUI();
+        this.awardWin();
       }
       if (p.body.position.y < -3 || Math.abs(p.body.position.x) > 2) { p.body.position.set(0, 0.5, 0); p.body.velocity.setZero(); }
     }
@@ -1766,11 +1774,67 @@ function figureBoxMesh() {
   return g;
 }
 
+// ピンポン球（たこ焼き台）
+const PINGPONG_R = 0.02;
+let pingGeo = null, pingMats = null;
+function pingBallMesh() {
+  pingGeo ??= new THREE.SphereGeometry(PINGPONG_R, 20, 14);
+  pingMats ??= [new THREE.MeshPhysicalMaterial({ color: 0xfbfbf6, roughness: 0.4, clearcoat: 0.4, clearcoatRoughness: 0.5 }), new THREE.MeshPhysicalMaterial({ color: 0xff9a2e, roughness: 0.4, clearcoat: 0.4 })];
+  const g = new THREE.Group();
+  g.add(mesh(pingGeo, Math.random() < 0.2 ? pingMats[1] : pingMats[0]));
+  return g;
+}
+// 当たりで出てくるカプセル景品
+let capsuleParts = null;
+function capsuleMesh() {
+  capsuleParts ??= { geo: new THREE.SphereGeometry(0.03, 24, 12, 0, Math.PI * 2, 0, Math.PI / 2), clear: new THREE.MeshPhysicalMaterial({ color: 0xffffff, roughness: 0.1, transmission: 0, opacity: 0.55, transparent: true, clearcoat: 1 }) };
+  const g = new THREE.Group();
+  const top = mesh(capsuleParts.geo, capsuleParts.clear); g.add(top);
+  const bot = mesh(capsuleParts.geo, paint(pick([0xff4d6d, 0x2f9bff, 0xffc93c, 0x37c978]))); bot.rotation.x = Math.PI; g.add(bot);
+  g.add(ball(0.018, plushMat(pick(['#f2a3bf', '#ffd84a', '#9be3c8'])), 0, -0.005, 0));
+  return g;
+}
+// Dリング付きの箱（上に樹脂のD形リング。リングの面は左右を向いている）
+const DRING = { W: 0.09, H: 0.11, D: 0.07, RZ: 0.03, RH: 0.045, T: 0.0025 };
+function dringBoxMesh() {
+  const hue = (Math.random() * 360) | 0, { W, H, D, RZ, RH } = DRING;
+  const face = canvasTex(256, 320, (c, w, h) => {
+    const gr = c.createLinearGradient(0, 0, 0, h); gr.addColorStop(0, `hsl(${hue},75%,62%)`); gr.addColorStop(1, `hsl(${(hue + 40) % 360},75%,42%)`);
+    c.fillStyle = gr; c.fillRect(0, 0, w, h);
+    c.fillStyle = 'rgba(255,255,255,0.9)'; c.beginPath(); c.arc(w / 2, 150, 70, 0, 7); c.fill();
+    c.fillStyle = `hsl(${hue},45%,30%)`; c.beginPath(); c.arc(w / 2, 135, 30, 0, 7); c.fill();
+    c.beginPath(); c.ellipse(w / 2, 195, 40, 26, 0, 0, 7); c.fill();
+    c.fillStyle = '#fff'; c.font = `900 34px ${FONT}`; c.textAlign = 'center'; c.fillText('MINI FIGURE', w / 2, 50); c.fillText('★ BOX ★', w / 2, 290);
+  });
+  const fm = new THREE.MeshPhysicalMaterial({ map: face, roughness: 0.45, clearcoat: 0.8 });
+  const sm = new THREE.MeshPhysicalMaterial({ color: new THREE.Color(`hsl(${hue},70%,50%)`), roughness: 0.45, clearcoat: 0.8 });
+  const g = new THREE.Group();
+  g.add(mesh(new THREE.BoxGeometry(W, H, D), [sm, sm, sm, sm, fm, fm]));
+  // D形リング（下が平ら、上が丸い）。yz 平面に立てる
+  const pts = [];
+  for (let i = 0; i <= 16; i++) { const t = (i / 16) * Math.PI; pts.push(new THREE.Vector3(0, H / 2 + RH * Math.sin(t), RZ * Math.cos(t))); }
+  pts.push(new THREE.Vector3(0, H / 2, 0));
+  const ring = mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts, true), 48, 0.0028, 8, true),
+    new THREE.MeshPhysicalMaterial({ color: new THREE.Color(`hsl(${(hue + 180) % 360},80%,60%)`), roughness: 0.2, clearcoat: 1 }));
+  g.add(ring);
+  const base = mesh(new THREE.BoxGeometry(0.012, 0.006, 0.02), M.darkMetal); base.position.y = H / 2 + 0.003; g.add(base);
+  return g;
+}
+// たこ焼きプレート: 穴の位置（台のローカル座標）
+const TAKO = { PY: 0.02, A: 0.03, X0: -0.34, DX: 0.085, COLS: 9, ZS: [0.07, 0.13, 0.2, 0.26], DROP: { x: 0.0, z: 0.165 }, DOME_R: 0.034 };
+TAKO.holes = [];
+for (const z of TAKO.ZS) for (let c = 0; c < TAKO.COLS; c++) {
+  const x = TAKO.X0 + c * TAKO.DX;
+  if (Math.abs(x - TAKO.DROP.x) < 0.01 && Math.abs(z - TAKO.DROP.z) < 0.05) continue;   // まん中はふりわけドーム
+  TAKO.holes.push({ x, z });
+}
+
 // ============================================================
 // クレーン台（3本爪/2本爪）。preset で台の種類を切り替える
 //  paradise: 定番のぬいぐるみ台      bigplush: 大きなぬいぐるみ1個の確率機
 //  taiwan:   台湾キャッチャー（つかんで投げる） bridge: 橋渡し（2本のバーの上の箱）
 //  ufo2:     2本爪のUFOキャッチャー型   keychain: 小さなマスコットの山盛り
+//  takoyaki: ピンポン球をたこ焼きプレートに落とす  dring: Dリングに爪を通して持ち上げる
 // ============================================================
 const CLAW_PRESETS = {
   paradise: {
@@ -1791,7 +1855,7 @@ const CLAW_PRESETS = {
     home: { x: -0.3, z: 0.33 },
   },
   bridge: {
-    name: '橋渡しフィギュア', short: '橋渡し', base: 'pit', bridge: true,
+    name: '橋渡しフィギュア', short: '橋渡し', base: 'pit', bridge: true, noHold: true,
     shell: { body: 0x2b2f3a, trim: 0xd9dde6, signSide: 0x111318, glow: 0x7ad7ff, hue: 0.55, sign: ['PRIZE FIGURE', '★ 橋渡し ★', '#2b2f3a', '#3a7bd5', '#2b2f3a'], panel: ['#14161c', '#262b36'], panelText: '箱をずらしてバーから落とせばGET！', backdrop: 'bridge' },
     K: { N: 2, R0: 0.03, ARM: 0.17, TIP: 0.035, TIP_ANG: 70 * Math.PI / 180, OPEN: 0.62, REST: 0.05, CLOSED: 0.03, GRIP: 2.2, WEIGHT: 9.0, SLACK_T: 0.5, PRESS: true },
     home: { x: -0.33, z: 0.30 },
@@ -1807,12 +1871,26 @@ const CLAW_PRESETS = {
     K: { R0: 0.022, ARM: 0.095, TIP: 0.035, HOLD: 0.22, GRIP: 1.6, HOLD_R: 0.07, HUB_R: 0.034, CLOSED: 0.14 },
     scale: 0.55,
   },
+  takoyaki: {
+    name: 'たこ焼きボール', short: 'たこ焼き', base: 'pit', takoyaki: true,
+    shell: { body: 0xff8a1e, trim: 0xfff4e0, signSide: 0x7a3d0a, glow: 0xffb35c, hue: 0.06, sign: ['TAKOYAKI BALL', '★ たこ焼きボール ★', '#ff8a1e', '#ffd23f', '#d6312b'], panel: ['#3a1d08', '#5a2a0d'], panelText: 'ボールを拾ってプレートへ！ あたりの穴に入ればGET', backdrop: 'tako' },
+    K: { R0: 0.02, ARM: 0.09, TIP: 0.032, OPEN: 0.8, HOLD: 0.25, GRIP: 1.2, HOLD_R: 0.06, HUB_R: 0.034, CLOSED: 0.03, WEIGHT: 2.0, DROP: TAKO.DROP },
+    views: { front: [[0, 1.02, 1.75], [0, 0.14, 0.05]] },   // 鉄板の穴が見えるよう少し高い位置から
+  },
+  dring: {
+    name: 'Dリングキャッチ', short: 'Dリング', base: 'ufo', noHold: true,
+    shell: { body: 0x7a5cff, signSide: 0x3b2a8a, glow: 0xb9a6ff, hue: 0.72, sign: ['D-RING CATCH', '★ Dリング ★', '#7a5cff', '#ff5fa2', '#3ec7ff'], panel: ['#1e1640', '#2f2266'], panelText: 'アームの爪をリングに通して持ち上げよう', backdrop: 'dring' },
+    // 爪は細く（リングに通るように）、つかんで保持はしない（リングに引っかけて持ち上げるだけ）
+    K: { N: 2, R0: 0.028, ARM: 0.14, TIP: 0.045, TIP_ANG: 55 * Math.PI / 180, OPEN: 0.55, CLOSED: 0.02, GRIP: 3.0, WEIGHT: 3.0, PRONG_W: 0.008, SIDE_FORCE: true, PRESS: true, SLACK_T: 0.15, SAG: 0.25 },
+  },
 };
 const TAIWAN = { SHIELD_Z: 0.2, SHIELD_H: 0.1, STEP_Y: 0.16, STEP_Z: -0.17 };
 // 手前と奥の2本のバー。すき間 0.106 は箱の厚み 0.10 よりわずかに広く、箱の長さ 0.24 より狭い（縦にしないと落ちない）
 const BRIDGE = { Y: 0.14, Z: 0.065, R: 0.012, HALF: 0.26 };
 const taiwanBackdrop = makePegBackdrop('台湾キャッチャー', 'つかんで投げる！手前に落ちたらGET', '#2a1410', '#ffb13d');
 const bridgeBackdrop = makePegBackdrop('PRIZE FIGURE', '箱をずらしてバーから落とせばGET', '#1d2230', '#7ad7ff');
+const takoBackdrop = makePegBackdrop('たこ焼きボール', 'あたりの穴にボールが入ればGET', '#2a1608', '#ffb35c');
+const dringBackdrop = makePegBackdrop('D-RING CATCH', '爪をリングに通して持ち上げよう', '#1a1436', '#b9a6ff');
 
 class ClawMachine extends Machine {
   constructor(x, presetName = 'paradise', opt = {}) {
@@ -1821,11 +1899,11 @@ class ClawMachine extends Machine {
     super({
       name: P.name, short: P.short, x, z: opt.z ?? 0, rotY: opt.rotY ?? 0,
       home: P.home ?? { x: -0.33, z: 0.28 }, range: { xMax: 0.33, zMin: -0.29 }, speed: 0.2,
-      dropHint: '離すとアームが下りるよ',
+      dropHint: '離すとアームが下りるよ', views: P.views,
       shell: {
         base: P.base, body: sh.body, trim: sh.trim, signSide: sh.signSide, interactive: true, lights: true, glow: sh.glow, hue: sh.hue,
         signTex: signTexture(...sh.sign),
-        backdrop: sh.backdrop === 'taiwan' ? taiwanBackdrop : sh.backdrop === 'bridge' ? bridgeBackdrop : plushBackdrop,
+        backdrop: { taiwan: taiwanBackdrop, bridge: bridgeBackdrop, tako: takoBackdrop, dring: dringBackdrop }[sh.backdrop] ?? plushBackdrop,
         panel: sh.panel, panelText: sh.panelText,
       },
     });
@@ -1855,7 +1933,7 @@ class ClawMachine extends Machine {
     this.plays = 0; this.ceiling = 8 + ((Math.random() * 8) | 0);   // 確率機の「天井」
     this.restockNotice = true;   // 店員さんが補充する
     // 景品の多い台は、止まった景品を眠らせて計算を省く（アームが触れると起きる）
-    if (P.frontDrop) this.world.allowSleep = true;
+    if (P.frontDrop || P.takoyaki) this.world.allowSleep = true;
     this.buildPhysics();
     this.buildClaw();
     for (const b of [this.hubBody, ...this.prongBodies]) b.allowSleep = false;
@@ -1864,6 +1942,8 @@ class ClawMachine extends Machine {
         aimPlane(this.group, -0.45, 0.45, 0.0005, -0.40, HOLE.z0), aimPlane(this.group, HOLE.x1, 0.45, 0.0005, HOLE.z0, 0.40),
         aimPlane(this.group, -0.45, HOLE.x1, -0.659, HOLE.z0, 0.40),
       ];
+    } else if (P.takoyaki) {
+      this.aimSurfaces = [aimPlane(this.group, -0.45, 0.45, 0.0005, -0.40, 0), aimPlane(this.group, -0.45, 0.45, TAKO.PY + 0.0005, 0, 0.30)];
     } else {
       this.aimSurfaces = [aimPlane(this.group, -0.45, 0.45, PIT_Y + 0.001, -0.40, 0.40)];
       if (P.frontDrop) this.aimSurfaces.push(aimPlane(this.group, -0.45, 0.45, 0.0005, TAIWAN.STEP_Z, TAIWAN.SHIELD_Z), aimPlane(this.group, -0.45, 0.45, TAIWAN.STEP_Y + 0.0005, -0.40, TAIWAN.STEP_Z));
@@ -1923,6 +2003,7 @@ class ClawMachine extends Machine {
       const hz = boxMesh(-0.45, 0.45, T.SHIELD_H, T.SHIELD_H + 0.012, T.SHIELD_Z - 0.001, T.SHIELD_Z + 0.013, M.hazard.clone(), g, { cast: false });
       hz.material.map = M.hazard.map.clone(); hz.material.map.repeat.set(6, 1);
     }
+    if (P.takoyaki) this.buildTakoyaki();
     if (P.bridge) {
       // 橋渡し: 手前と奥に平行なゴム巻きのバー。箱がその間に落ちれば GET
       const bar = new THREE.MeshStandardMaterial({ color: 0x1a1a1e, roughness: 0.7 });
@@ -1954,8 +2035,9 @@ class ClawMachine extends Machine {
     hub.scale.setScalar(K.HUB_R / 0.044);
     g.add(hub);
     const s = K.ARM / 0.13;
-    const armGeo = new RoundedBoxGeometry(0.012 * Math.sqrt(s), K.ARM, (N === 2 ? 0.04 : 0.022) * Math.sqrt(s), 2, 0.004);
-    const tipGeo = new RoundedBoxGeometry(0.014 * Math.sqrt(s), K.TIP, (N === 2 ? 0.05 : 0.026) * Math.sqrt(s), 2, 0.005);
+    const pw = K.PRONG_W ? K.PRONG_W * 2 : (N === 2 ? 0.04 : 0.022) * Math.sqrt(s);   // 爪の幅（Dリング台は細い爪）
+    const armGeo = new RoundedBoxGeometry(0.012 * Math.sqrt(s), K.ARM, pw, 2, 0.004);
+    const tipGeo = new RoundedBoxGeometry(0.014 * Math.sqrt(s), K.TIP, pw + 0.004, 2, 0.005);
     const knuckleGeo = new THREE.CylinderGeometry(0.008, 0.008, 0.026, 16);
     this.prongVis = [];
     for (let i = 0; i < N; i++) {
@@ -1975,7 +2057,7 @@ class ClawMachine extends Machine {
     this.hubBody.isHub = true;
     this.world.addBody(this.hubBody);
     this.prongBodies = [];
-    const halfW = this.prongHalfW = (N === 2 ? 0.022 : 0.013) * Math.sqrt(s);
+    const halfW = this.prongHalfW = K.PRONG_W ?? (N === 2 ? 0.022 : 0.013) * Math.sqrt(s);
     for (let i = 0; i < N; i++) {
       const b = new CANNON.Body({ mass: 0, type: CANNON.Body.KINEMATIC, material: PM.claw, collisionFilterGroup: G_CLAW, collisionFilterMask: G_PRIZE });
       b.addShape(new CANNON.Box(v3(0.008, K.ARM / 2, halfW)), v3(0, -K.ARM / 2, 0));
@@ -1995,6 +2077,8 @@ class ClawMachine extends Machine {
       case 'taiwan': this.spawnTaiwan(50, false); break;
       case 'bridge': this.spawnBridge(); break;
       case 'keychain': this.spawn(30); break;
+      case 'takoyaki': this.spawnBalls(36); this.newRound(); break;
+      case 'dring': this.spawnDring(6); break;
       case 'ufo2': this.spawn(15); break;
       default: this.spawn(17);
     }
@@ -2095,6 +2179,119 @@ class ClawMachine extends Machine {
       this.addPrize('chips', g, b);
     }
   }
+  // たこ焼き台: 奥はピンポン球のプール、手前は穴がたくさん開いた鉄板。
+  // 球の乗る穴は四角い開口（球より小さい）で、球は穴のふちに乗って半分沈む＝たこ焼き器のくぼみ
+  buildTakoyaki() {
+    const w = this.world, g = this.group, T = TAKO, a = T.A / 2;
+    staticBox(w, -0.45, 0.45, -0.04, 0, -0.40, 0.30);                         // 床
+    boxMesh(-0.45, 0.45, -0.04, 0, -0.40, 0, M.felt.clone(), g, { cast: false }).material.color.set(0x3a6fd8);
+    staticBox(w, -0.45, 0.45, 0, 0.06, -0.012, 0);                            // プールとプレートの仕切り
+    boxMesh(-0.45, 0.45, 0, 0.06, -0.012, 0, M.acrylic, g, { cast: false }).renderOrder = 2;
+    staticBox(w, -0.45, 0.45, 0, 0.07, 0.30, 0.312);                          // 手前のガード
+    boxMesh(-0.45, 0.45, 0, 0.07, 0.30, 0.312, M.acrylic, g, { cast: false }).renderOrder = 2;
+    boxMesh(-0.45, 0.45, PIT_Y, 0, 0.312, 0.326, M.darkMetal, g);
+    // 鉄板（当たり判定は穴のあいた格子）
+    const zs = T.ZS, xs = Array.from({ length: T.COLS }, (_, c) => T.X0 + c * T.DX);
+    const zEdges = [0, ...zs.flatMap(z => [z - a, z + a]), 0.30];
+    for (let i = 0; i < zEdges.length; i += 2) staticBox(w, -0.45, 0.45, 0, T.PY, zEdges[i], zEdges[i + 1]);
+    for (const z of zs) {
+      const xEdges = [-0.45, ...xs.flatMap(x => [x - a, x + a]), 0.45];
+      for (let i = 0; i < xEdges.length; i += 2) staticBox(w, xEdges[i], xEdges[i + 1], 0, T.PY, z - a, z + a);
+    }
+    // ふりわけドーム（落とした球が四方へ散る）
+    const dome = new CANNON.Body({ mass: 0, material: PM.stat, collisionFilterGroup: G_STATIC, collisionFilterMask: G_PRIZE | G_CLAW });
+    dome.addShape(new CANNON.Sphere(T.DOME_R)); dome.position.set(T.DROP.x, T.PY - T.DOME_R * 0.35, T.DROP.z);
+    w.addBody(dome);
+    const domeM = mesh(new THREE.SphereGeometry(T.DOME_R, 32, 16, 0, Math.PI * 2, 0, Math.PI / 2), M.chrome);
+    domeM.position.set(T.DROP.x, T.PY - T.DOME_R * 0.35, T.DROP.z); domeM.scale.y = 1; g.add(domeM);
+    // 見た目: 鋳物の鉄板と丸いくぼみ
+    const plateTex = canvasTex(1024, 300, (c, W, Hh) => {
+      c.fillStyle = '#2b2622'; c.fillRect(0, 0, W, Hh);
+      noise(c, W, Hh, 18);
+      for (const hl of T.holes) {
+        const px = (hl.x + 0.45) / 0.9 * W, py = hl.z / 0.30 * Hh, r = 0.019 / 0.9 * W;
+        const gr = c.createRadialGradient(px - r * 0.3, py - r * 0.3, r * 0.1, px, py, r);
+        gr.addColorStop(0, '#0d0b0a'); gr.addColorStop(0.75, '#1a1613'); gr.addColorStop(1, '#4a423b');
+        c.fillStyle = gr; c.beginPath(); c.arc(px, py, r, 0, 7); c.fill();
+      }
+    });
+    const plate = new THREE.Mesh(new THREE.PlaneGeometry(0.9, 0.30), new THREE.MeshStandardMaterial({ map: plateTex, roughness: 0.55, metalness: 0.6 }));
+    plate.rotation.x = -Math.PI / 2; plate.position.set(0, T.PY + 0.0005, 0.15); plate.receiveShadow = true; g.add(plate);
+    boxMesh(-0.45, 0.45, 0, T.PY, 0, 0.30, M.darkMetal, g, { cast: false });
+    // あたりの穴の光る輪（ラウンドごとに場所が変わる）
+    this.atariMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(0xff3030).multiplyScalar(3) });
+    this.atariRings = [0, 1].map(() => {
+      const r = new THREE.Mesh(new THREE.RingGeometry(0.02, 0.026, 32), this.atariMat);
+      r.rotation.x = -Math.PI / 2; g.add(r); return r;
+    });
+  }
+  spawnBalls(n) {
+    for (let i = 0; i < n; i++) {
+      const b = new CANNON.Body({ mass: 0.0027, material: PM.ball, collisionFilterGroup: G_PRIZE, collisionFilterMask: G_STATIC | G_CLAW | G_PRIZE, linearDamping: 0.15, angularDamping: 0.2 });
+      b.addShape(new CANNON.Sphere(PINGPONG_R));
+      b.sleepSpeedLimit = 0.05; b.sleepTimeLimit = 0.4;
+      b.position.set(rnd(-0.42, 0.42), 0.03 + (i / 18 | 0) * 0.045 + rnd(0, 0.02), rnd(-0.37, -0.04));
+      this.addPrize('ball', pingBallMesh(), b);
+    }
+  }
+  // 新しいラウンド: あたりの穴を2つ選ぶ
+  newRound() {
+    const pickHole = () => { let i; do i = (Math.random() * TAKO.holes.length) | 0; while (this.atari?.includes(i)); return i; };
+    this.atari = [];
+    this.atari = [pickHole(), pickHole()];
+    this.atari.forEach((hi, k) => this.atariRings[k].position.set(TAKO.holes[hi].x, TAKO.PY + 0.001, TAKO.holes[hi].z));
+    this.hitT = 0;
+  }
+  // プレートとこぼれた球をプールへ戻す（鉄板が傾いて球がプールへ転がる、の代わり）
+  clearPlate() {
+    for (const p of this.prizes) {
+      if (p.kind !== 'ball' || (p.body.position.z < 0 && p.body.position.y > -0.1)) continue;
+      p.body.position.set(rnd(-0.42, 0.42), rnd(0.08, 0.2), rnd(-0.37, -0.05));
+      p.body.velocity.setZero(); p.body.angularVelocity.setZero(); p.body.wakeUp();
+    }
+  }
+  // 球が止まった穴を調べ、あたりなら景品（カプセル）を出す
+  checkTakoyaki(h) {
+    if (this.hitT > 0) {
+      this.hitT -= h;
+      if (this.hitT <= 0) { this.clearPlate(); this.newRound(); }
+      return;
+    }
+    for (const p of this.prizes) {
+      const b = p.body, q = b.position;
+      if (p.kind !== 'ball' || q.z < 0 || q.y > TAKO.PY + 0.016 || b.velocity.length() > 0.05) continue;
+      const hi = TAKO.holes.findIndex(hl => Math.hypot(hl.x - q.x, hl.z - q.z) < 0.012);
+      if (hi < 0 || !this.atari.includes(hi)) continue;
+      this.awardWin();
+      this.S.plink?.();
+      const cap = new CANNON.Body({ mass: 0.05, material: PM.box, collisionFilterGroup: G_PRIZE, collisionFilterMask: G_STATIC | G_PRIZE, linearDamping: 0.05 });
+      cap.addShape(new CANNON.Sphere(0.03));
+      cap.position.set(rnd(-0.3, 0.3), -0.02, 0.36);
+      const cp = this.addPrize('capsule', capsuleMesh(), cap);
+      cp.won = true;
+      const caps = this.prizes.filter(c => c.kind === 'capsule');
+      while (caps.length > 5) this.removePrize(caps.shift());
+      this.hitT = 2.0;   // 少し見せてから球を戻して次のラウンド
+      return;
+    }
+  }
+  spawnDring(n, fromAbove = false) {
+    const spots = [[-0.08, -0.22], [0.12, -0.22], [0.32, -0.2], [-0.05, 0.0], [0.15, 0.02], [0.33, 0.06], [0.0, 0.22], [0.2, 0.24]];
+    const used = this.prizes.filter(p => !p.won).map(p => p.body.position);
+    const free = spots.filter(([x, z]) => used.every(u => Math.hypot(u.x - x, u.z - z) > 0.11)).sort(() => Math.random() - 0.5);
+    const { W, H, D, RZ, RH, T } = DRING;
+    for (let i = 0; i < n && i < free.length; i++) {
+      const b = new CANNON.Body({ mass: 0.2, material: PM.box, collisionFilterGroup: G_PRIZE, collisionFilterMask: G_STATIC | G_CLAW | G_PRIZE, linearDamping: 0.05, angularDamping: 0.2 });
+      b.addShape(new CANNON.Box(v3(W / 2, H / 2, D / 2)));
+      // Dリング: 左右の柱と上の棒（爪先が通る開口は幅 約5.5cm・高さ 約4.5cm）
+      for (const sz of [-1, 1]) b.addShape(new CANNON.Box(v3(T, RH / 2, T)), v3(0, H / 2 + RH / 2, sz * RZ));
+      b.addShape(new CANNON.Box(v3(T, T, RZ + T)), v3(0, H / 2 + RH, 0));
+      const [x, z] = free[i];
+      b.position.set(x + rnd(-0.01, 0.01), fromAbove ? 0.4 : H / 2 + 0.001, z + rnd(-0.01, 0.01));
+      b.quaternion.setFromEuler(0, (Math.random() < 0.5 ? 0 : Math.PI) + rnd(-0.12, 0.12), 0);   // リングの面は左右を向く
+      this.addPrize('dring', dringBoxMesh(), b);
+    }
+  }
   spawnBridge() {
     const b = new CANNON.Body({ mass: 0.3, material: PM.box, collisionFilterGroup: G_PRIZE, collisionFilterMask: G_STATIC | G_CLAW | G_PRIZE, linearDamping: 0.05, angularDamping: 0.2 });
     b.addShape(new CANNON.Box(v3(0.08, 0.05, 0.12)));
@@ -2123,6 +2320,29 @@ class ClawMachine extends Machine {
       case 'bridge': if (left) return false; clear(); this.spawnBridge(); break;
       case 'taiwan': if (left >= 62) return false; clear(); this.spawnTaiwan(12, true); break;
       case 'keychain': if (left >= 16) return false; clear(); this.spawn(14, true); break;
+      case 'takoyaki': {
+        // プールの球が少なくなったら、店員さんがプレートの球をプールに戻す
+        const inPool = this.prizes.filter(p => p.kind === 'ball' && p.body.position.z < 0 && p.body.position.y > -0.1).length;
+        if (inPool >= 8) return false;
+        this.clearPlate(); this.newRound();
+        return true;
+      }
+      case 'dring': {
+        // 倒れてリングが上を向いていない箱は、店員さんがその場で起こす
+        let fixed = false;
+        for (const p of this.prizes) {
+          if (p.won) continue;
+          const up = p.body.quaternion.vmult(v3(0, 1, 0));
+          if (up.y > 0.8) continue;
+          const q = p.body.position;
+          q.set(Math.min(0.38, Math.max(-0.15, q.x)), DRING.H / 2 + 0.002, Math.min(0.3, Math.max(-0.3, q.z)));
+          p.body.quaternion.setFromEuler(0, (Math.random() < 0.5 ? 0 : Math.PI) + rnd(-0.12, 0.12), 0);
+          p.body.velocity.setZero(); p.body.angularVelocity.setZero(); p.body.wakeUp();
+          fixed = true;
+        }
+        if (left >= 3) { if (fixed) this.awake = 4; return fixed ? '店員さんが景品を直しました' : false; }
+        clear(); this.spawnDring(3, true); break;
+      }
       default: if (left >= 9) return false; clear(); this.spawn(8, true);
     }
     this.awake = 4;
@@ -2143,13 +2363,15 @@ class ClawMachine extends Machine {
         break;
       case 'bridge': this.weak = 1.0; break;
       case 'keychain': this.weak = rnd(0.2, 0.65); break;
+      case 'takoyaki': this.weak = rnd(0.5, 1.0); break;
+      case 'dring': this.weak = rnd(0.25, 0.85); break;
       default: this.weak = Math.random() < 0.15 ? 1.0 : rnd(0.2, 0.7);
     }
   }
   aimOrigin() { return new THREE.Vector3(this.x + this.sway.x, this.y - 0.02, this.z + this.sway.z); }
   aimTargets() { return [...this.prizes.map(p => p.group), ...this.aimSurfaces]; }
   onDrop() { this.slack = 0; this.setState('drop', ''); }
-  isWin(b) { return b.position.y < -0.14; }
+  isWin(b) { return !this.P.takoyaki && b.position.y < -0.14; }   // たこ焼きは球ではなく「あたりの穴」で判定
   // 山がほぼ止まったら全部眠らせる（台湾キャッチャーは景品が多いので計算を減らす）。アームや落ちてきた景品が触れると起きる
   sleepPile() {
     for (const p of this.prizes) {
@@ -2162,7 +2384,10 @@ class ClawMachine extends Machine {
     p.body.velocity.setZero(); p.body.angularVelocity.setZero();
     p.body.wakeUp();   // 眠ったまま移すと空中で止まってしまう
   }
-  floorY() { return this.P.base === 'ufo' || this.P.frontDrop ? 0 : PIT_Y; }
+  floorY() {
+    if (this.P.takoyaki) return this.z > 0 ? TAKO.PY : 0;
+    return this.P.base === 'ufo' || this.P.frontDrop ? 0 : PIT_Y;
+  }
 
   clawPose() {
     const K = this.K;
@@ -2282,13 +2507,13 @@ class ClawMachine extends Machine {
       }
       case 'hold':
         this.squeeze(h);
-        // 橋渡しはつかんで保持しない（箱は爪先で押す・引っかけて持ち上げるだけ）
-        if (this.t > 0.3) { if (!this.P.bridge) this.tryHold(); this.setState('lift'); }
+        // 橋渡し・Dリングはつかんで保持しない（爪先で押す・引っかけて持ち上げるだけ）
+        if (this.t > 0.3) { if (!this.P.noHold) this.tryHold(); this.setState('lift'); }
         break;
       case 'lift':
         this.squeeze(h);
         this.y += K.RISE * Math.min(1, this.t * 4) * h;
-        if (this.y >= K.HUB_TOP) { this.y = K.HUB_TOP; this.S.clank(); this.setState(this.P.frontDrop && this.weak < 1 ? 'fling' : 'relax'); }
+        if (this.y >= K.HUB_TOP) { this.y = K.HUB_TOP; this.S.clank(); this.sag0 = [...this.theta]; this.setState(this.P.frontDrop && this.weak < 1 ? 'fling' : 'relax'); }
         break;
       case 'fling': {
         // 台湾キャッチャー: 上まで来るとアームの力が抜け（天井に達した回だけは抜けずに取り出し口まで運ぶ）、斜めに傾いた基本姿勢へ一気に戻る。
@@ -2312,20 +2537,31 @@ class ClawMachine extends Machine {
         // 上まで上がるとアームの力が弱まる
         this.grip = K.GRIP * (1 - (1 - this.weak) * Math.min(1, this.t / 0.3));
         if (this.held) this.setHoldForce(K.HOLD * this.held.quality * (this.grip / K.GRIP));
-        this.squeeze(h);
+        if (K.SAG) {
+          // モーターの力が抜けると、爪がばねで少し開く（弱いほど大きく開き、リングが爪先からすべる）
+          const open = K.SAG * (1 - this.weak);
+          for (let i = 0; i < K.N; i++) this.theta[i] = Math.min(this.sag0[i] + open, this.theta[i] + 1.5 * h);
+        } else this.squeeze(h);
         if (this.t > 0.4) this.setState('return');
         break;
       case 'return': {
-        if (!this.P.frontDrop || this.held) this.squeeze(h);
+        if ((!this.P.frontDrop || this.held) && !K.SAG) this.squeeze(h);
         let done;
-        [tvx, tvz, done] = this.returnHome(h);
+        // たこ焼き台はプレートの上（ふりわけドームの真上）で離す
+        [tvx, tvz, done] = this.returnHome(h, K.DROP ?? this.o.home);
         if (done) this.setState('release');
         break;
       }
       case 'release':
         if (this.t > 0.2) { this.letGo(); this.openAll(3.0, h, K.OPEN + 0.25); }
-        if (this.t > 1.2) this.setState('reset');
+        if (this.t > 1.2) this.setState(K.DROP ? 'park' : 'reset');
         break;
+      case 'park': {
+        let done;
+        [tvx, tvz, done] = this.returnHome(h);
+        if (done) this.setState('reset');
+        break;
+      }
       case 'reset':
         this.tilt = Math.max(K.TILT, this.tilt - 1.2 * h);
         for (let i = 0; i < K.N; i++) this.theta[i] += Math.sign(K.REST - this.theta[i]) * Math.min(Math.abs(K.REST - this.theta[i]), 2.4 * h);
@@ -2366,6 +2602,7 @@ class ClawMachine extends Machine {
   }
   afterStep() {
     this.squeezeThroughHole();
+    if (this.P.takoyaki) this.checkTakoyaki(H);
     const f = Array(this.K.N).fill(0), tipY = this.tipLowestY();
     let up = 0;
     for (const ce of this.world.contacts) {
@@ -2375,7 +2612,12 @@ class ClawMachine extends Machine {
       const other = claw === a ? b : a;
       if (other.type !== CANNON.Body.DYNAMIC) continue;
       if (!claw.isHub) {
-        f[claw.prongIndex] += Math.abs(ce.multiplier);
+        if (this.K.SIDE_FORCE) {
+          // 爪を閉じる向きをじゃまする成分だけ数える（上から乗っているだけの力では止まらない）
+          const phi = this.PHI[claw.prongIndex], s = claw === b ? 1 : -1;
+          const along = s * (ce.ni.x * -Math.cos(phi) + ce.ni.z * -Math.sin(phi));
+          f[claw.prongIndex] += Math.abs(ce.multiplier) * Math.max(0, -along);
+        } else f[claw.prongIndex] += Math.abs(ce.multiplier);
         if (this.state === 'grab' || this.state === 'hold') {
           if (!this.touching.has(other)) this.touching.set(other, new Set());
           this.touching.get(other).add(claw.prongIndex);
@@ -2844,6 +3086,8 @@ new ClawMachine(-1.25, 'ufo2');
 const clawMachine = new ClawMachine(0);
 const ringMachine = new RingHookMachine(1.25);
 const vegMachine = new RingHookMachine(2.5, { kind: 'veg' });
+new ClawMachine(2.5, 'dring', ROW_B);
+new ClawMachine(1.25, 'takoyaki', ROW_B);
 new ClawMachine(0, 'bridge', ROW_B);
 new ClawMachine(-1.25, 'taiwan', ROW_B);
 new ClawMachine(-2.5, 'bigplush', ROW_B);
@@ -2873,38 +3117,6 @@ function updateShadowSpot() {
   shadowOwner = m;
 }
 
-// 飾りの筐体（遊べない）
-const decorMats = new Map();
-function decorMat(m) {
-  if (!decorMats.has(m.uuid)) {
-    const c = m.color ? m.color.clone() : new THREE.Color(0xffffff);
-    decorMats.set(m.uuid, new THREE.MeshStandardMaterial({ color: c, map: m.map ?? null, roughness: m.roughness ?? 0.8, emissive: c.clone().multiplyScalar(0.28), emissiveMap: m.map ?? null }));
-  }
-  return decorMats.get(m.uuid);
-}
-function decorCabinet(x, z, rotY, hue, label) {
-  const g = new THREE.Group(); g.position.set(x, 0, z); g.rotation.y = rotY; scene.add(g);
-  const body = new THREE.Color(0xff3d8b).offsetHSL(hue, 0, 0).getHex();
-  buildShell(g, {
-    base: 'ufo', body, signSide: 0x3a2a6e, interactive: false, lights: false, hue: hue * 3,
-    signTex: signTexture(label[0], label[1], ...label[2]),
-    backdrop: plushBackdrop, panel: ['#2a2a40', '#3a3a55'], panelText: 'ただいま準備中です',
-  });
-  for (let i = 0; i < 12; i++) {
-    const p = PLUSH_KINDS[pick(Object.keys(PLUSH_KINDS))]();
-    p.position.set(rnd(-0.36, 0.38), 0.05 + (i > 7 ? 0.08 : 0), rnd(-0.32, 0.3));
-    p.rotation.set(rnd(-0.6, 0.6), rnd(0, 6.28), rnd(-0.6, 0.6));
-    if (p.position.x < -0.16 && p.position.z > 0.1) p.position.x += 0.3;
-    // 飾りの台には照明を置かないので、軽いマテリアルで自ら少し光らせる
-    p.traverse(o => { if (o.isMesh) { o.castShadow = false; if (!Array.isArray(o.material)) o.material = decorMat(o.material); } });
-    g.add(p);
-  }
-  mergeStatic(g);
-  const zMin = rotY === 0 ? z - 0.48 : z - 0.64, zMax = rotY === 0 ? z + 0.64 : z + 0.48;
-  addObstacle(x - 0.53, x + 0.53, zMin, zMax);
-}
-decorCabinet(1.25, ROW_B.z, Math.PI, 0.8, ['NEKO NEKO', '★ ねこねこパーク ★', ['#ff9800', '#ff4081', '#7c4dff']]);
-decorCabinet(2.5, ROW_B.z, Math.PI, 0.1, ['LUCKY CLAW', '★ ラッキークロー ★', ['#00bcd4', '#3f51b5', '#e91e63']]);
 
 // ============================================================
 // 歩行（一人称）
