@@ -2943,7 +2943,7 @@ const RING_PRESETS = {
     goods: ['melon', 'cabbage', 'onion', 'carrot', 'potato', 'tomato', 'corn', 'eggplant', 'broccoli', 'pumpkin'],
   },
   snack: {
-    name: 'お菓子リングフック', short: 'お菓子フック', hookYaw: 0, ringR: 0.034,
+    name: 'お菓子リングフック', short: 'お菓子フック', hookYaw: 0, ringR: 0.036,
     shell: { body: 0xff7eb6, signSide: 0xc2185b, glow: 0xffb3d9, hue: 0.9, sign: ['SWEETS HOOK', '★ お菓子リングフック ★', '#ff5fa2', '#ffc93c', '#ff7a3d'], panel: ['#5a1636', '#7a1d4a'] },
     backdrop: () => snackBackdrop, panelText: 'リングが小さい！ フックの先を正確にねらおう',
     goods: ['bigchips', 'chocobox', 'cookietin', 'gummy', 'senbei', 'sticks'],
@@ -2989,6 +2989,8 @@ class RingHookMachine extends Machine {
       TRAY: [0.30, 0.008, 0.20], TRAY_Y: -0.06,   // 景品の上に横棒・板とのすき間を十分とる
       ROPE_K: 900, ROPE_C: 8,  // 板とトレーをつなぐチェーン（引っ張るときだけ効くばね）
     };
+    // 小さいリングは同じチェーンでも輪の下端が高くなるので、そのぶん深く下ろす（輪の下端の高さをそろえる）
+    this.K.HEAD_DOWN -= 2 * (0.05 - this.K.RING_R);
     this.y = this.K.HEAD_TOP;
     this.tension = 0; this.stall = 0; this.hooked = false;
     this.buildPhysics();
