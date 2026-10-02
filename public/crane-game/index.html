@@ -1694,9 +1694,9 @@ function chipBagMesh(flavor) {
       c.font = `900 34px ${FONT}`; c.strokeText('CHIPS', W / 2, 108); c.fillText('CHIPS', W / 2, 108);
       c.fillStyle = '#fff'; c.font = `900 36px ${FONT}`; c.fillText(name, W / 2, 310);
     });
+    // 側面はシールでつぶれて細いので、表と同じ材質にして描画を1回にまとめる
     const face = new THREE.MeshPhysicalMaterial({ map: tex, metalness: 0.5, roughness: 0.32, clearcoat: 0.6 });
-    const side = new THREE.MeshPhysicalMaterial({ color: base, metalness: 0.6, roughness: 0.3 });
-    chipCache.set(name, { geo, mats: [side, side, side, side, face, face] });
+    chipCache.set(name, { geo, mats: face });
   }
   const c = chipCache.get(name);
   const g = new THREE.Group();
@@ -1721,7 +1721,7 @@ function yakisobaMesh() {
     });
     const sm = new THREE.MeshStandardMaterial({ map: side, roughness: 0.55 });
     const lm = new THREE.MeshPhysicalMaterial({ map: lid, roughness: 0.4, clearcoat: 0.5 });
-    yakisobaMats = [sm, sm, lm, M.paintWhite, sm, sm];
+    yakisobaMats = [sm, sm, lm, sm, sm, sm];
   }
   const g = new THREE.Group();
   g.add(mesh(yakisobaGeo ??= new RoundedBoxGeometry(...YAKISOBA, 2, 0.008), yakisobaMats));
@@ -1782,6 +1782,7 @@ const CLAW_PRESETS = {
     name: 'でっかいぬいぐるみ', short: 'でっかい', base: 'ufo',
     shell: { body: 0xffb3d1, signSide: 0x9b6bd6, glow: 0xffc8e6, hue: 0.92, sign: ['BIG FLUFFY', '★ でっかいぬいぐるみ ★', '#ffb3d1', '#c8a6ff', '#8fd3ff'], panel: ['#3a2350', '#5a2a66'], panelText: '確率機　ときどきアームが強くなるよ' },
     K: { R0: 0.05, ARM: 0.2, TIP: 0.07, OPEN: 0.75, GRIP: 4.0, HOLD: 9.0, HOLD_R: 0.17, HUB_R: 0.062, WEIGHT: 5.0, SLIP: 0.06 },
+    home: { x: -0.33, z: 0.25 },   // 大きいので、取り出し口の上で前のガラスにこすらない位置まで運ぶ
   },
   taiwan: {
     name: '台湾キャッチャー', short: '台湾', base: 'pit', frontDrop: true,
@@ -2027,10 +2028,9 @@ class ClawMachine extends Machine {
     const kind = Math.random() < 0.5 ? 'enaga' : 'usa';
     const b = new CANNON.Body({ mass: 0.4, material: PM.plush, collisionFilterGroup: G_PRIZE, collisionFilterMask: G_STATIC | G_CLAW | G_PRIZE, linearDamping: 0.05, angularDamping: 0.5 });
     let g;
-    const S = 1.15;
+    const S = 1.0;   // 取り出し口（24cm角）をぎりぎり通る大きさ
     if (kind === 'enaga') {
       b.addShape(new CANNON.Sphere(0.088 * S));
-      b.addShape(new CANNON.Box(v3(0.015 * S, 0.006 * S, 0.05 * S)), v3(0, 0.02 * S, -0.12 * S));
       // おなかは綿がつぶれて平ら（球のままだと転がり続ける）
       for (const [x, z] of [[1, 1], [1, -1], [-1, 1], [-1, -1]]) b.addShape(new CANNON.Sphere(0.04 * S), v3(x * 0.042 * S, -0.05 * S, z * 0.04 * S));
       g = shimaEnagaMesh();
@@ -2113,6 +2113,7 @@ class ClawMachine extends Machine {
           // アームが届かない隅に寄ったら、店員さんが真ん中に戻す
           const b = p.body.position;
           if (b.x > this.o.home.x + 0.04 && b.z < this.o.home.z - 0.04) return false;
+          if (b.x < HOLE.x1 + 0.02 && b.z > HOLE.z0 - 0.02) return false;   // 取り出し口にかかっているなら、そのまま落ちるのを待つ
           b.set(rnd(-0.05, 0.08), 0.15, rnd(-0.05, 0.05)); p.body.velocity.setZero(); p.body.angularVelocity.setZero();
           this.awake = 4;
           return '店員さんが景品を直しました';
@@ -2257,6 +2258,8 @@ class ClawMachine extends Machine {
 
   step(h) {
     const K = this.K;
+    // 景品が全部取られていたら、次のプレイの前に補充する（落ちきる前にプレイが終わった場合）
+    if (['idle', 'ready1'].includes(this.state) && !this.prizes.some(p => !p.won) && this.restock() && active === this) banner('店員さんが景品を補充しました', 'info');
     let [tvx, tvz] = this.moveXZ();
     switch (this.state) {
       case 'drop':
@@ -2345,7 +2348,24 @@ class ClawMachine extends Machine {
     for (const k of ['x', 'z']) if (Math.abs(s[k]) > 0.03) { s[k] = Math.sign(s[k]) * 0.03; s['v' + k] *= -0.3; }
     this.applyClawBodies(h);
   }
+  // ぬいぐるみはやわらかいので、取り出し口のふちに引っかかって止まっても、つぶれながら下へ抜けていく。
+  // 硬い当たり判定では斜めに挟まったままになるので、しばらく止まっていたら一瞬だけふちを通り抜けさせる
+  squeezeThroughHole() {
+    if (this.P.base !== 'ufo') return;
+    for (const p of this.prizes) {
+      const b = p.body, q = b.position;
+      if (p.squish > 0 && (p.squish -= H) <= 0) b.collisionFilterMask = G_STATIC | G_CLAW | G_PRIZE;
+      if (!b.isPlush || p.won || q.x > HOLE.x1 + 0.02 || q.z < HOLE.z0 - 0.02 || q.y > 0.2 || q.y < -0.3) { p.stuck = 0; continue; }
+      p.stuck = b.velocity.length() < 0.08 ? (p.stuck ?? 0) + H : 0;
+      if (p.stuck > 0.4) {
+        p.stuck = 0; p.squish = 0.3;
+        b.collisionFilterMask = G_CLAW | G_PRIZE;
+        b.wakeUp(); b.velocity.set(0, -0.3, 0);
+      }
+    }
+  }
   afterStep() {
+    this.squeezeThroughHole();
     const f = Array(this.K.N).fill(0), tipY = this.tipLowestY();
     let up = 0;
     for (const ce of this.world.contacts) {
