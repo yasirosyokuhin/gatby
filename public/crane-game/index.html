@@ -1821,7 +1821,7 @@ function dringBoxMesh() {
   return g;
 }
 // たこ焼きプレート: 穴の位置（台のローカル座標）
-const TAKO = { PY: 0.02, A: 0.03, X0: -0.34, DX: 0.085, COLS: 9, ZS: [0.07, 0.13, 0.2, 0.26], DROP: { x: 0.0, z: 0.165 }, DOME_R: 0.034 };
+const TAKO = { PY: 0.02, A: 0.03, PX: 0.225, X0: -0.17, DX: 0.085, COLS: 5, ZS: [0.07, 0.13, 0.2, 0.26], DROP: { x: 0.0, z: 0.165 }, DOME_R: 0.034 };
 TAKO.holes = [];
 for (const z of TAKO.ZS) for (let c = 0; c < TAKO.COLS; c++) {
   const x = TAKO.X0 + c * TAKO.DX;
@@ -1943,7 +1943,7 @@ class ClawMachine extends Machine {
         aimPlane(this.group, -0.45, HOLE.x1, -0.659, HOLE.z0, 0.40),
       ];
     } else if (P.takoyaki) {
-      this.aimSurfaces = [aimPlane(this.group, -0.45, 0.45, 0.0005, -0.40, 0), aimPlane(this.group, -0.45, 0.45, TAKO.PY + 0.0005, 0, 0.30)];
+      this.aimSurfaces = [aimPlane(this.group, -0.45, 0.45, 0.0005, -0.40, 0), aimPlane(this.group, -TAKO.PX, TAKO.PX, TAKO.PY + 0.0005, 0, 0.30)];
     } else {
       this.aimSurfaces = [aimPlane(this.group, -0.45, 0.45, PIT_Y + 0.001, -0.40, 0.40)];
       if (P.frontDrop) this.aimSurfaces.push(aimPlane(this.group, -0.45, 0.45, 0.0005, TAIWAN.STEP_Z, TAIWAN.SHIELD_Z), aimPlane(this.group, -0.45, 0.45, TAIWAN.STEP_Y + 0.0005, -0.40, TAIWAN.STEP_Z));
@@ -2197,18 +2197,28 @@ class ClawMachine extends Machine {
     ramp(0, 0.02, -0.355, 0.45, 0.01, 0.06, 0.45, 0);        // 奥
     ramp(-0.405, 0.02, -0.2, 0.06, 0.01, 0.2, 0, -0.45);     // 左
     ramp(0.405, 0.02, -0.2, 0.06, 0.01, 0.2, 0, 0.45);       // 右
-    staticBox(w, -0.45, 0.45, 0, 0.06, -0.012, 0);                            // プールとプレートの仕切り
-    boxMesh(-0.45, 0.45, 0, 0.06, -0.012, 0, M.acrylic, g, { cast: false }).renderOrder = 2;
+    staticBox(w, -0.45, 0.45, 0, 0.08, -0.012, 0);                            // プールとプレートの仕切り
+    boxMesh(-0.45, 0.45, 0, 0.08, -0.012, 0, M.acrylic, g, { cast: false }).renderOrder = 2;
     staticBox(w, -0.45, 0.45, 0, 0.07, 0.30, 0.312);                          // 手前のガード
     boxMesh(-0.45, 0.45, 0, 0.07, 0.30, 0.312, M.acrylic, g, { cast: false }).renderOrder = 2;
     boxMesh(-0.45, 0.45, PIT_Y, 0, 0.312, 0.326, M.darkMetal, g);
     // 鉄板（当たり判定は穴のあいた格子）
     const zs = T.ZS, xs = Array.from({ length: T.COLS }, (_, c) => T.X0 + c * T.DX);
     const zEdges = [0, ...zs.flatMap(z => [z - a, z + a]), 0.30];
-    for (let i = 0; i < zEdges.length; i += 2) staticBox(w, -0.45, 0.45, 0, T.PY, zEdges[i], zEdges[i + 1]);
+    for (let i = 0; i < zEdges.length; i += 2) staticBox(w, -T.PX, T.PX, 0, T.PY, zEdges[i], zEdges[i + 1]);
     for (const z of zs) {
-      const xEdges = [-0.45, ...xs.flatMap(x => [x - a, x + a]), 0.45];
+      const xEdges = [-T.PX, ...xs.flatMap(x => [x - a, x + a]), T.PX];
       for (let i = 0; i < xEdges.length; i += 2) staticBox(w, xEdges[i], xEdges[i + 1], 0, T.PY, z - a, z + a);
+    }
+    // 鉄板の左右は鉄板へ向かって下る坂（外へはねた球も鉄板へ転がって戻る）
+    const orange = paint(0xff8a1e), slope = 0.3, rw = (0.45 - T.PX) / 2 + 0.005;
+    for (const sx of [-1, 1]) {
+      const b = new CANNON.Body({ mass: 0, material: PM.stat, collisionFilterGroup: G_STATIC, collisionFilterMask: G_PRIZE | G_CLAW });
+      b.addShape(new CANNON.Box(v3(rw, 0.01, 0.15)));
+      const cx = sx * (T.PX + rw - 0.005), cy = T.PY + rw * Math.sin(slope) - 0.01 * Math.cos(slope);
+      b.position.set(cx, cy, 0.15); b.quaternion.setFromEuler(0, 0, sx * slope);
+      w.addBody(b);
+      const m = mesh(new THREE.BoxGeometry(rw * 2, 0.02, 0.3), orange); m.position.set(cx, cy, 0.15); m.rotation.z = sx * slope; g.add(m);
     }
     // ふりわけドーム（落とした球が四方へ散る）
     const dome = new CANNON.Body({ mass: 0, material: PM.stat, collisionFilterGroup: G_STATIC, collisionFilterMask: G_PRIZE | G_CLAW });
@@ -2217,22 +2227,22 @@ class ClawMachine extends Machine {
     const domeM = mesh(new THREE.SphereGeometry(T.DOME_R, 32, 16, 0, Math.PI * 2, 0, Math.PI / 2), M.chrome);
     domeM.position.set(T.DROP.x, T.PY - T.DOME_R * 0.35, T.DROP.z); domeM.scale.y = 1; g.add(domeM);
     // 見た目: 鋳物の鉄板と丸いくぼみ
-    const plateTex = canvasTex(1024, 300, (c, W, Hh) => {
+    const plateTex = canvasTex(600, 400, (c, W, Hh) => {
       c.fillStyle = '#2b2622'; c.fillRect(0, 0, W, Hh);
       noise(c, W, Hh, 18);
       for (const hl of T.holes) {
-        const px = (hl.x + 0.45) / 0.9 * W, py = hl.z / 0.30 * Hh, r = 0.019 / 0.9 * W;
+        const px = (hl.x + T.PX) / (2 * T.PX) * W, py = hl.z / 0.30 * Hh, r = 0.019 / (2 * T.PX) * W;
         const gr = c.createRadialGradient(px - r * 0.3, py - r * 0.3, r * 0.1, px, py, r);
         gr.addColorStop(0, '#0d0b0a'); gr.addColorStop(0.75, '#1a1613'); gr.addColorStop(1, '#4a423b');
         c.fillStyle = gr; c.beginPath(); c.arc(px, py, r, 0, 7); c.fill();
       }
     });
-    const plate = new THREE.Mesh(new THREE.PlaneGeometry(0.9, 0.30), new THREE.MeshStandardMaterial({ map: plateTex, roughness: 0.55, metalness: 0.6 }));
+    const plate = new THREE.Mesh(new THREE.PlaneGeometry(2 * T.PX, 0.30), new THREE.MeshStandardMaterial({ map: plateTex, roughness: 0.55, metalness: 0.6 }));
     plate.rotation.x = -Math.PI / 2; plate.position.set(0, T.PY + 0.0005, 0.15); plate.receiveShadow = true; g.add(plate);
-    boxMesh(-0.45, 0.45, 0, T.PY, 0, 0.30, M.darkMetal, g, { cast: false });
+    boxMesh(-T.PX, T.PX, 0, T.PY, 0, 0.30, M.darkMetal, g, { cast: false });
     // あたりの穴の光る輪（ラウンドごとに場所が変わる）
     this.atariMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(0xff3030).multiplyScalar(3) });
-    this.atariRings = [0, 1].map(() => {
+    this.atariRings = [0].map(() => {
       const r = new THREE.Mesh(new THREE.RingGeometry(0.02, 0.026, 32), this.atariMat);
       r.rotation.x = -Math.PI / 2; g.add(r); return r;
     });
@@ -2242,15 +2252,13 @@ class ClawMachine extends Machine {
       const b = new CANNON.Body({ mass: 0.0027, material: PM.ball, collisionFilterGroup: G_PRIZE, collisionFilterMask: G_STATIC | G_CLAW | G_PRIZE, linearDamping: 0.15, angularDamping: 0.2 });
       b.addShape(new CANNON.Sphere(PINGPONG_R));
       b.sleepSpeedLimit = 0.05; b.sleepTimeLimit = 0.4;
-      b.position.set(rnd(-0.32, 0.32), 0.03 + (i / 14 | 0) * 0.045 + rnd(0, 0.02), rnd(-0.28, -0.04));
+      b.position.set(rnd(-0.32, 0.32), 0.03 + (i / 14 | 0) * 0.045 + rnd(0, 0.02), rnd(-0.28, -0.08));
       this.addPrize('ball', pingBallMesh(), b);
     }
   }
-  // 新しいラウンド: あたりの穴を2つ選ぶ
+  // 新しいラウンド: あたりの穴を1つ選ぶ
   newRound() {
-    const pickHole = () => { let i; do i = (Math.random() * TAKO.holes.length) | 0; while (this.atari?.includes(i)); return i; };
-    this.atari = [];
-    this.atari = [pickHole(), pickHole()];
+    this.atari = [(Math.random() * TAKO.holes.length) | 0];
     this.atari.forEach((hi, k) => this.atariRings[k].position.set(TAKO.holes[hi].x, TAKO.PY + 0.001, TAKO.holes[hi].z));
     this.hitT = 0;
   }
@@ -2274,6 +2282,10 @@ class ClawMachine extends Machine {
       if (p.kind !== 'ball' || q.z < 0 || q.y > TAKO.PY + 0.016 || b.velocity.length() > 0.05) continue;
       const hi = TAKO.holes.findIndex(hl => Math.hypot(hl.x - q.x, hl.z - q.z) < 0.012);
       if (hi < 0 || !this.atari.includes(hi)) continue;
+      if (!this.inPlay) {   // 遊んでいないときに転がり込んだ球は、プールへ戻す（GET にはならない）
+        b.position.set(rnd(-0.3, 0.3), 0.12, rnd(-0.25, -0.06)); b.velocity.setZero(); b.wakeUp();
+        continue;
+      }
       this.awardWin();
       this.S.plink?.();
       const cap = new CANNON.Body({ mass: 0.05, material: PM.box, collisionFilterGroup: G_PRIZE, collisionFilterMask: G_STATIC | G_PRIZE, linearDamping: 0.05 });
