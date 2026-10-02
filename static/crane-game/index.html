@@ -436,6 +436,8 @@ function makePegBackdrop(title, sub, bg, accent) {
 }
 const pegBackdrop = makePegBackdrop('日用品 GET!!', 'リングをフックにかけて板を持ち上げよう', '#c9d2d4', '#e03131');
 const vegBackdrop = makePegBackdrop('新鮮野菜 GET!!', '横にゆれるリングで左向きフックをねらえ', '#cfd8c2', '#2f8a2f');
+const snackBackdrop = makePegBackdrop('お菓子 GET!!', '小さいリングをフックの先にかけよう', '#f3dfe6', '#d6336c');
+const drinkBackdrop = makePegBackdrop('ドリンク GET!!', 'ななめのリングの向きを読んでかけよう', '#d5e4f0', '#1d6fd1');
 
 const pitTex = canvasTex(512, 512, (g, w, h) => {
   g.fillStyle = '#1d1f24'; g.fillRect(0, 0, w, h);
@@ -671,6 +673,7 @@ const PM = {
   ring: new CANNON.Material('ring'),
   guide: new CANNON.Material('guide'),
   ball: new CANNON.Material('ball'),
+  rubber: new CANNON.Material('rubber'),
 };
 function makeWorld() {
   const w = new CANNON.World({ gravity: v3(0, -9.82, 0) });
@@ -704,6 +707,7 @@ function makeWorld() {
   cm(PM.ball, PM.stat, 0.3, 0.55);
   cm(PM.ball, PM.ball, 0.2, 0.6);
   cm(PM.ball, PM.claw, 0.9, 0.05);
+  cm(PM.box, PM.rubber, 0.5, 0.02);   // 滑り止めのゴムチューブ
   return w;
 }
 function staticBox(world, x0, x1, y0, y1, z0, z1, material = PM.stat) {
@@ -797,7 +801,7 @@ const noSfx = new Proxy({}, { get: () => () => {} });
 // ============================================================
 // 店内
 // ============================================================
-const ROOM = { x0: -3.25, x1: 3.85, z0: -1.1, z1: 4.0 };
+const ROOM = { x0: -3.25, x1: 4.6, z0: -1.1, z1: 4.0 };
 const obstacles = [];   // 歩行時の当たり判定（XZ平面の矩形）
 function addObstacle(x0, x1, z0, z1) { obstacles.push({ x0, x1, z0, z1 }); }
 {
@@ -818,7 +822,7 @@ function addObstacle(x0, x1, z0, z1) { obstacles.push({ x0, x1, z0, z1 }); }
   ceil.rotation.x = Math.PI / 2; ceil.position.set(cx, ROOM_FLOOR + wallH, cz);
   scene.add(ceil);
   const panelMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(0xfff2e0).multiplyScalar(4) });
-  for (const x of [-2.2, -0.6, 1.0, 2.6]) for (const z of [0.9, 2.5]) {
+  for (const x of [-2.2, -0.6, 1.0, 2.6, 4.0]) for (const z of [0.9, 2.5]) {
     const p = new THREE.Mesh(new THREE.PlaneGeometry(0.9, 0.25), panelMat);
     p.rotation.x = Math.PI / 2; p.position.set(x, ROOM_FLOOR + wallH - 0.01, z);
     scene.add(p);
@@ -1206,6 +1210,180 @@ Object.assign(GOODS, {
       return g;
     },
   },
+});
+
+// ------------------------------------------------------------
+// 景品を手早く作るための部品（パッケージの箱・ボトル・袋）。絵柄はすべてオリジナル
+// ------------------------------------------------------------
+const pkgTexCache = new Map();
+// 幅 w に1行で収まる文字の大きさ（全角は1文字≒1em、半角は約0.6em）
+const fitPx = (w, t) => (w * 0.88) / [...t].reduce((n, ch) => n + (ch.charCodeAt(0) < 0x2000 ? 0.6 : 1), 0);
+function pkgTex(key, w, h, draw) {
+  if (!pkgTexCache.has(key)) pkgTexCache.set(key, labelTex(w, h, draw));
+  return pkgTexCache.get(key);
+}
+// 正面と背面にラベル、ほかの面は地の色の箱
+function packMesh(key, w, h, d, { bg, title, sub = '', fg = '#fff', band = null, deco = null }) {
+  const W = 320, Hh = Math.max(96, Math.round(320 * h / w));
+  const face = pkgTex(key, W, Hh, (g, cw, ch) => {
+    g.fillStyle = bg; g.fillRect(0, 0, cw, ch);
+    if (band) { g.fillStyle = band; g.fillRect(0, ch * 0.62, cw, ch * 0.2); }
+    deco?.(g, cw, ch);
+    wrapText(g, title, cw / 2, ch * 0.42 + 10, Math.min(64, ch * 0.34, fitPx(cw, title)), fg);
+    if (sub) wrapText(g, sub, cw / 2, ch * 0.8 + 6, Math.min(30, ch * 0.16, fitPx(cw, sub)), fg, 800);
+  });
+  const fm = new THREE.MeshPhysicalMaterial({ map: face, roughness: 0.45, clearcoat: 0.4 });
+  const sm = new THREE.MeshPhysicalMaterial({ color: new THREE.Color(bg), roughness: 0.5, clearcoat: 0.3 });
+  const g = new THREE.Group();
+  g.add(mesh(new THREE.BoxGeometry(w, h, d), [sm, sm, sm, sm, fm, fm]));
+  return g;
+}
+// ボトル（胴にラベルを巻いたもの）。clear: 透明なペットボトル
+function bottleMesh(key, r, h, { body, cap, label, title, fg = '#fff', clear = false, pump = false }) {
+  const g = new THREE.Group();
+  const bodyH = h * 0.72, shoulderH = h * 0.14, neckH = h - bodyH - shoulderH;
+  const bm = clear ? new THREE.MeshPhysicalMaterial({ color: body, roughness: 0.08, metalness: 0, transparent: true, opacity: 0.55, clearcoat: 1 })
+                   : new THREE.MeshPhysicalMaterial({ color: body, roughness: 0.3, clearcoat: 0.6 });
+  g.add(at(mesh(new THREE.CylinderGeometry(r, r, bodyH, 28), bm), 0, -h / 2 + bodyH / 2, 0));
+  g.add(at(mesh(new THREE.CylinderGeometry(r * 0.4, r, shoulderH, 28), bm), 0, -h / 2 + bodyH + shoulderH / 2, 0));
+  const capM = paint(cap);
+  g.add(at(mesh(new THREE.CylinderGeometry(r * 0.38, r * 0.38, neckH, 20), capM), 0, h / 2 - neckH / 2, 0));
+  if (pump) {
+    g.add(at(mesh(new THREE.CylinderGeometry(r * 0.12, r * 0.12, h * 0.12, 12), capM), 0, h / 2 + h * 0.06, 0));
+    g.add(at(mesh(new THREE.BoxGeometry(r * 0.9, r * 0.2, r * 0.25), capM), r * 0.35, h / 2 + h * 0.12, 0));
+  }
+  const tex = pkgTex(key, 512, 160, (c, W, Hh) => {
+    c.fillStyle = label; c.fillRect(0, 0, W, Hh);
+    for (let k = 0; k < 2; k++) wrapText(c, title, W * (0.25 + k * 0.5), Hh * 0.62, Math.min(46, fitPx(W / 2, title)), fg);
+  });
+  g.add(at(mesh(new THREE.CylinderGeometry(r * 1.004, r * 1.004, bodyH * 0.55, 28, 1, true), new THREE.MeshStandardMaterial({ map: tex, roughness: 0.4 })), 0, -h / 2 + bodyH * 0.45, 0));
+  return g;
+}
+// ふくらんだ袋（お菓子・野菜の袋）
+function bagMesh(key, w, h, d, { bg, title, sub = '', fg = '#fff', shine = 0.5 }) {
+  const geo = new THREE.BoxGeometry(w, h, d, 8, 10, 1);
+  const pos = geo.attributes.position;
+  for (let i = 0; i < pos.count; i++) {
+    const x = pos.getX(i) / (w / 2), y = pos.getY(i) / (h / 2);
+    pos.setZ(i, pos.getZ(i) * (0.15 + 0.85 * (1 - Math.abs(x) ** 3) * (1 - Math.abs(y) ** 4)));
+  }
+  geo.computeVertexNormals();
+  const tex = pkgTex(key, 256, Math.round(256 * h / w), (c, W, Hh) => {
+    c.fillStyle = bg; c.fillRect(0, 0, W, Hh);
+    c.fillStyle = 'rgba(0,0,0,0.22)'; for (let x = 0; x < W; x += 6) { c.fillRect(x, 0, 3, 10); c.fillRect(x, Hh - 10, 3, 10); }
+    wrapText(c, title, W / 2, Hh * 0.45, Math.min(52, fitPx(W, title)), fg);
+    if (sub) wrapText(c, sub, W / 2, Hh * 0.75, Math.min(28, fitPx(W, sub)), fg, 800);
+  });
+  const g = new THREE.Group();
+  g.add(mesh(geo, new THREE.MeshPhysicalMaterial({ map: tex, metalness: shine, roughness: 0.35, clearcoat: 0.5 })));
+  return g;
+}
+const veggieMat = c => new THREE.MeshPhysicalMaterial({ color: c, roughness: 0.45, clearcoat: 0.5, clearcoatRoughness: 0.4 });
+const trayMat = new THREE.MeshStandardMaterial({ color: 0xf2f2ee, roughness: 0.6 });
+const wrapFilm = new THREE.MeshPhysicalMaterial({ color: 0xffffff, roughness: 0.08, transparent: true, opacity: 0.18, clearcoat: 1 });
+
+Object.assign(GOODS, {
+  // ---- 日用品（追加） ----
+  shampoo: { size: [0.066, 0.17, 0.066], mass: 0.42, shapes(b) { b.addShape(new CANNON.Cylinder(0.033, 0.033, 0.17, 14)); },
+    build() { return bottleMesh('shampoo', 0.033, 0.17, { body: 0xf3e7ff, cap: 0x7a4fd1, label: '#7a4fd1', title: 'しっとりシャンプー', pump: true }); } },
+  handsoap: { size: [0.06, 0.14, 0.06], mass: 0.3, shapes(b) { b.addShape(new CANNON.Cylinder(0.03, 0.03, 0.14, 14)); },
+    build() { return bottleMesh('handsoap', 0.03, 0.14, { body: 0xe9fff2, cap: 0x2fae6a, label: '#2fae6a', title: '泡ハンドソープ', pump: true }); } },
+  sponge: { size: [0.13, 0.05, 0.09], mass: 0.06,
+    build() { const g = packMesh('sponge', 0.13, 0.05, 0.09, { bg: '#ffe14d', title: 'キッチンスポンジ 3コ', fg: '#1b6b2c', band: '#4cc26a' }); return g; } },
+  wetwipe: { size: [0.17, 0.05, 0.095], mass: 0.26,
+    build() { return packMesh('wetwipe', 0.17, 0.05, 0.095, { bg: '#e8f6ff', title: 'ウェットティッシュ', sub: '80枚×3', fg: '#1d5fb8', band: '#9fd4ff' }); } },
+  trashbag: { size: [0.14, 0.04, 0.09], mass: 0.18,
+    build() { return packMesh('trashbag', 0.14, 0.04, 0.09, { bg: '#2b2f36', title: 'ゴミ袋 45L', sub: '50枚入', fg: '#ffd43b' }); } },
+  // ---- 野菜（追加） ----
+  tomato: { size: [0.15, 0.07, 0.10], mass: 0.38,
+    build() {
+      const g = new THREE.Group(); const red = veggieMat(0xe32b1f), leaf = veggieMat(0x2f8a2f);
+      g.add(at(mesh(new THREE.BoxGeometry(0.15, 0.015, 0.10), trayMat), 0, -0.0275, 0));
+      for (const x of [-0.045, 0, 0.045]) { g.add(ball(0.03, red, x, 0.005, 0, 1, 0.85, 1)); g.add(ball(0.008, leaf, x, 0.03, 0, 1.4, 0.4, 1.4)); }
+      g.add(at(mesh(new THREE.BoxGeometry(0.152, 0.07, 0.102), wrapFilm, { cast: false }), 0, 0, 0));
+      return g;
+    } },
+  corn: { size: [0.18, 0.06, 0.09], mass: 0.42,
+    build() {
+      const g = new THREE.Group(); const kern = veggieMat(0xf5c518), husk = veggieMat(0x7bbf4a);
+      for (const z of [-0.022, 0.022]) {
+        const c = mesh(new THREE.CapsuleGeometry(0.022, 0.12, 8, 16), kern); c.rotation.z = Math.PI / 2; c.position.z = z; g.add(c);
+        const h = mesh(new THREE.ConeGeometry(0.024, 0.05, 12), husk); h.rotation.z = -Math.PI / 2; h.position.set(0.09, 0, z); g.add(h);
+      }
+      return g;
+    } },
+  eggplant: { size: [0.15, 0.06, 0.09], mass: 0.32,
+    build() {
+      const g = bagMesh('eggplant', 0.15, 0.06, 0.09, { bg: 'rgba(255,255,255,0.0)', title: '' });
+      g.children[0].material = wrapFilm;
+      const purple = veggieMat(0x3a1550), cap = veggieMat(0x2e5b1f);
+      for (const z of [-0.028, 0, 0.028]) { const e = mesh(new THREE.CapsuleGeometry(0.018, 0.08, 8, 16), purple); e.rotation.z = Math.PI / 2; e.position.z = z; g.add(e); g.add(at(mesh(new THREE.ConeGeometry(0.014, 0.025, 10), cap), 0.06, 0, z)); g.children.at(-1).rotation.z = -Math.PI / 2; }
+      return g;
+    } },
+  broccoli: { size: [0.11, 0.12, 0.11], mass: 0.3, angularDamping: 0.6,
+    shapes(b) { b.addShape(new CANNON.Sphere(0.05), v3(0, 0.01, 0)); b.addShape(new CANNON.Box(v3(0.03, 0.01, 0.03)), v3(0, -0.05, 0)); },
+    build() {
+      const g = new THREE.Group(); const green = veggieMat(0x2f7a2a), stem = veggieMat(0x9ccf6a);
+      g.add(at(mesh(new THREE.CylinderGeometry(0.014, 0.02, 0.06, 12), stem), 0, -0.035, 0));
+      for (let i = 0; i < 9; i++) { const a = i / 9 * Math.PI * 2; g.add(ball(0.026, green, Math.cos(a) * 0.028, 0.02 + (i % 2) * 0.01, Math.sin(a) * 0.028)); }
+      g.add(ball(0.03, green, 0, 0.035, 0));
+      return g;
+    } },
+  pumpkin: { size: [0.13, 0.10, 0.13], mass: 0.6, angularDamping: 0.7,
+    shapes(b) { b.addShape(new CANNON.Sphere(0.058), v3(0, 0.006, 0)); b.addShape(new CANNON.Box(v3(0.04, 0.008, 0.04)), v3(0, -0.042, 0)); },
+    build() {
+      const g = new THREE.Group(); const skin = veggieMat(0x2f4a2a);
+      for (let i = 0; i < 8; i++) { const a = i / 8 * Math.PI * 2; g.add(ball(0.04, skin, Math.cos(a) * 0.026, 0.004, Math.sin(a) * 0.026, 1, 1.15, 1)); }
+      g.add(at(mesh(new THREE.CylinderGeometry(0.006, 0.009, 0.025, 8), veggieMat(0x6b5a2a)), 0, 0.05, 0));
+      return g;
+    } },
+  // ---- お菓子 ----
+  bigchips: { size: [0.15, 0.18, 0.05], mass: 0.12,
+    build() { return bagMesh('bigchips', 0.15, 0.18, 0.05, { bg: '#f2b705', title: 'ポテトチップス', sub: 'BIGサイズ うすしお', fg: '#b4271b' }); } },
+  chocobox: { size: [0.16, 0.035, 0.11], mass: 0.16,
+    build() { return packMesh('chocobox', 0.16, 0.035, 0.11, { bg: '#5a2d14', title: 'ミルクチョコ', sub: 'アソート24コ', fg: '#ffd8a8', band: '#c0392b' }); } },
+  cookietin: { size: [0.12, 0.05, 0.12], mass: 0.32, shapes(b) { b.addShape(new CANNON.Cylinder(0.06, 0.06, 0.05, 16)); },
+    build() {
+      const g = new THREE.Group();
+      const lid = pkgTex('cookie', 256, 256, (c, W, Hh) => { c.fillStyle = '#1f4fa8'; c.fillRect(0, 0, W, Hh); c.fillStyle = '#ffd43b'; c.beginPath(); c.arc(W / 2, Hh / 2, 92, 0, 7); c.fill(); wrapText(c, 'バタークッキー', W / 2, Hh / 2 + 14, 34, '#1f4fa8'); });
+      g.add(mesh(new THREE.CylinderGeometry(0.06, 0.06, 0.05, 40), [new THREE.MeshPhysicalMaterial({ color: 0x1f4fa8, metalness: 0.7, roughness: 0.25 }), new THREE.MeshPhysicalMaterial({ map: lid, metalness: 0.5, roughness: 0.3 }), M.chrome]));
+      return g;
+    } },
+  gummy: { size: [0.11, 0.14, 0.03], mass: 0.08,
+    build() { return bagMesh('gummy', 0.11, 0.14, 0.03, { bg: '#ff5fa2', title: 'フルーツグミ', sub: 'ぶどう・もも', fg: '#fff' }); } },
+  senbei: { size: [0.13, 0.16, 0.045], mass: 0.1,
+    build() { return bagMesh('senbei', 0.13, 0.16, 0.045, { bg: '#8a5a2b', title: '手焼きせんべい', sub: 'しょうゆ味', fg: '#fff3d6', shine: 0.2 }); } },
+  sticks: { size: [0.16, 0.025, 0.06], mass: 0.08,
+    build() { return packMesh('sticks', 0.16, 0.025, 0.06, { bg: '#d6312b', title: 'チョコスティック', fg: '#fff' }); } },
+  // ---- 飲み物 ----
+  pet2l: { size: [0.09, 0.19, 0.09], mass: 0.65, shapes(b) { b.addShape(new CANNON.Cylinder(0.045, 0.045, 0.19, 16)); },
+    build() { return bottleMesh('pet2l', 0.045, 0.19, { body: 0xd8f0ff, cap: 0x1d6fd1, label: '#1d6fd1', title: 'おいしい水 2L', clear: true }); } },
+  cans6: { size: [0.15, 0.065, 0.10], mass: 0.5,
+    build() {
+      const g = new THREE.Group();
+      const can = new THREE.CylinderGeometry(0.0215, 0.0215, 0.062, 24);
+      const tex = pkgTex('can', 256, 128, (c, W, Hh) => { c.fillStyle = '#e8eef5'; c.fillRect(0, 0, W, Hh); c.fillStyle = '#e03131'; c.fillRect(0, 30, W, 50); wrapText(c, 'ソーダ', W / 2, 66, 34, '#fff'); });
+      const cm = new THREE.MeshPhysicalMaterial({ map: tex, metalness: 0.8, roughness: 0.25 });
+      for (const x of [-0.048, 0, 0.048]) for (const z of [-0.024, 0.024]) g.add(at(mesh(can, [cm, M.chrome, M.chrome]), x, 0, z));
+      g.add(at(mesh(new THREE.BoxGeometry(0.15, 0.04, 0.098), wrapFilm, { cast: false }), 0, -0.01, 0));
+      return g;
+    } },
+  juice: { size: [0.07, 0.17, 0.07], mass: 0.5,
+    build() {
+      const g = packMesh('juice', 0.07, 0.15, 0.07, { bg: '#ff9f1c', title: 'オレンジ100%', sub: '1000ml', fg: '#fff' });
+      g.children[0].position.y = -0.01;
+      // 紙パックの屋根（三角の折り目と、上のシール部分）
+      const roofM = paint(0xff9f1c);
+      for (const sz of [-1, 1]) { const r = mesh(new THREE.BoxGeometry(0.07, 0.003, 0.042), roofM); r.position.set(0, 0.073, sz * 0.017); r.rotation.x = sz * 0.55; g.add(r); }
+      g.add(at(mesh(new THREE.BoxGeometry(0.07, 0.016, 0.004), roofM), 0, 0.087, 0));
+      return g;
+    } },
+  teabottle: { size: [0.13, 0.15, 0.065], mass: 0.6,
+    build() {
+      const g = new THREE.Group();
+      for (const x of [-0.033, 0.033]) { const b = bottleMesh('tea', 0.031, 0.15, { body: 0xe6f5d8, cap: 0x2f7a2a, label: '#2f7a2a', title: '緑茶', clear: true }); b.position.x = x; g.add(b); }
+      return g;
+    } },
 });
 
 function goodsBody(kind) {
@@ -1751,31 +1929,47 @@ function cupNoodleMesh() {
   const bottom = mesh(new THREE.CylinderGeometry(0.038, 0.038, 0.003, 24), M.paintWhite); bottom.position.y = -0.045; g.add(bottom);
   return g;
 }
-// 箱入りフィギュア（橋渡し用。オリジナルの絵柄）
+// 箱入りフィギュア（橋渡し用。オリジナルのキャラクター）。上面に透明な窓があり、中のフィギュアが見える
 function figureBoxMesh() {
-  const hue = (Math.random() * 360) | 0;
-  // 上面（縦長 0.16×0.24）: キャラクターの窓とロゴ
-  const face = canvasTex(360, 540, (c, W, Hh) => {
-    const gr = c.createLinearGradient(0, 0, W, Hh); gr.addColorStop(0, `hsl(${hue},70%,55%)`); gr.addColorStop(1, `hsl(${(hue + 60) % 360},70%,35%)`);
-    c.fillStyle = gr; c.fillRect(0, 0, W, Hh);
-    c.fillStyle = 'rgba(255,255,255,0.85)'; c.fillRect(30, 70, W - 60, Hh - 190);
-    c.fillStyle = `hsl(${hue},40%,25%)`;   // 人物のシルエット
-    c.beginPath(); c.arc(W / 2, 160, 46, 0, 7); c.fill();
-    c.beginPath(); c.moveTo(W / 2 - 70, 390); c.lineTo(W / 2 - 40, 220); c.lineTo(W / 2 + 40, 220); c.lineTo(W / 2 + 70, 390); c.fill();
-    c.fillStyle = '#fff'; c.font = `900 38px ${FONT}`; c.textAlign = 'center'; c.fillText('PREMIUM', W / 2, 50);
-    c.font = `900 46px ${FONT}`; c.fillText('FIGURE', W / 2, Hh - 70);
-    c.fillStyle = '#ffd400'; c.font = `900 28px ${FONT}`; c.fillText('プライズ限定', W / 2, Hh - 28);
+  const hue = (Math.random() * 360) | 0, [W, H, D] = BRIDGE.BOX;
+  const c1 = `hsl(${hue},75%,52%)`, c2 = `hsl(${(hue + 50) % 360},80%,38%)`;
+  // 上面: 外枠の印刷と、窓（透明）の部分
+  const top = canvasTex(360, 560, (c, cw, ch) => {
+    const gr = c.createLinearGradient(0, 0, cw, ch); gr.addColorStop(0, c1); gr.addColorStop(1, c2);
+    c.fillStyle = gr; c.fillRect(0, 0, cw, ch);
+    c.clearRect(46, 80, cw - 92, ch - 190);                    // 窓
+    c.strokeStyle = '#ffd400'; c.lineWidth = 8; c.strokeRect(46, 80, cw - 92, ch - 190);
+    c.fillStyle = '#fff'; c.font = `900 40px ${FONT}`; c.textAlign = 'center'; c.fillText('PREMIUM FIGURE', cw / 2, 56);
+    c.font = `900 34px ${FONT}`; c.fillText('★ STAR MAGICAL ★', cw / 2, ch - 64);
+    c.fillStyle = '#ffd400'; c.font = `900 24px ${FONT}`; c.fillText('プライズ限定  全1種', cw / 2, ch - 26);
   });
-  const sideTex = canvasTex(540, 220, (c, W, Hh) => {
-    c.fillStyle = `hsl(${hue},70%,45%)`; c.fillRect(0, 0, W, Hh);
-    c.fillStyle = '#fff'; c.font = `900 56px ${FONT}`; c.textAlign = 'center'; c.fillText('PREMIUM FIGURE', W / 2, Hh / 2 + 20);
+  const side = canvasTex(560, 240, (c, cw, ch) => {
+    const gr = c.createLinearGradient(0, 0, cw, 0); gr.addColorStop(0, c2); gr.addColorStop(1, c1);
+    c.fillStyle = gr; c.fillRect(0, 0, cw, ch);
+    c.fillStyle = 'rgba(255,255,255,0.15)'; for (let i = 0; i < 12; i++) star(c, Math.random() * cw, Math.random() * ch, 10 + Math.random() * 14);
+    c.fillStyle = '#fff'; c.font = `900 60px ${FONT}`; c.textAlign = 'center'; c.fillText('STAR MAGICAL', cw / 2, ch / 2 + 20);
   });
-  const faceM = new THREE.MeshPhysicalMaterial({ map: face, roughness: 0.45, clearcoat: 1, clearcoatRoughness: 0.15 });
-  const sideM = new THREE.MeshPhysicalMaterial({ map: sideTex, roughness: 0.45, clearcoat: 1, clearcoatRoughness: 0.15 });
-  const topM = new THREE.MeshPhysicalMaterial({ color: new THREE.Color(`hsl(${hue},70%,45%)`), roughness: 0.45, clearcoat: 1 });
-  // 2本のバーをまたいで縦長に寝かせる: x=幅 0.16、y=厚み 0.10、z=長さ 0.24。表は上(+y)
+  const topM = new THREE.MeshPhysicalMaterial({ map: top, transparent: true, alphaTest: 0.5, roughness: 0.4, clearcoat: 1, clearcoatRoughness: 0.15 });
+  const sideM = new THREE.MeshPhysicalMaterial({ map: side, roughness: 0.4, clearcoat: 1, clearcoatRoughness: 0.15 });
+  const plainM = new THREE.MeshPhysicalMaterial({ color: new THREE.Color(c2), roughness: 0.45, clearcoat: 0.8 });
   const g = new THREE.Group();
-  g.add(mesh(new THREE.BoxGeometry(0.16, 0.10, 0.24), [sideM, sideM, faceM, topM, topM, topM]));
+  g.add(mesh(new THREE.BoxGeometry(W, H, D), [plainM, plainM, topM, plainM, sideM, sideM]));
+  // 窓のフィルム（透明）
+  const film = mesh(new THREE.PlaneGeometry(W * 0.74, D * 0.66), new THREE.MeshPhysicalMaterial({ color: 0xffffff, roughness: 0.05, transparent: true, opacity: 0.16, clearcoat: 1 }), { cast: false });
+  film.rotation.x = -Math.PI / 2; film.position.set(0, H / 2 - 0.004, -D * 0.055); g.add(film);
+  // 中の台紙とフィギュア（あお向けに寝かせて入っている）
+  g.add(at(mesh(new THREE.BoxGeometry(W * 0.9, 0.004, D * 0.9), M.paintWhite), 0, -H / 2 + 0.03, 0));
+  const fig = new THREE.Group();
+  const skin = new THREE.MeshPhysicalMaterial({ color: 0xffe0cc, roughness: 0.5, clearcoat: 0.6 });
+  const hair = new THREE.MeshPhysicalMaterial({ color: new THREE.Color(`hsl(${(hue + 180) % 360},70%,60%)`), roughness: 0.35, clearcoat: 1 });
+  const dress = new THREE.MeshPhysicalMaterial({ color: new THREE.Color(c1), roughness: 0.4, clearcoat: 1 });
+  fig.add(at(mesh(new THREE.ConeGeometry(0.03, 0.08, 20), dress), 0, 0.04, 0));
+  fig.add(ball(0.022, skin, 0, 0.1, 0));
+  fig.add(ball(0.025, hair, 0, 0.108, -0.006, 1.05, 1, 1));
+  for (const s of [-1, 1]) { fig.add(ball(0.012, hair, s * 0.024, 0.09, -0.008, 0.8, 1.8, 0.8)); fig.add(at(mesh(new THREE.CapsuleGeometry(0.005, 0.03, 4, 8), skin), s * 0.022, 0.055, 0)); }
+  fig.add(at(mesh(new THREE.CylinderGeometry(0.03, 0.034, 0.008, 24), new THREE.MeshPhysicalMaterial({ color: 0x222831, roughness: 0.3, clearcoat: 1 })), 0, -0.004, 0));
+  fig.rotation.x = -Math.PI / 2; fig.position.set(0, -H / 2 + 0.05, -0.065); fig.scale.setScalar(1.15);
+  g.add(fig);
   return g;
 }
 
@@ -1787,16 +1981,6 @@ function pingBallMesh() {
   pingMats ??= [new THREE.MeshPhysicalMaterial({ color: 0xfbfbf6, roughness: 0.4, clearcoat: 0.4, clearcoatRoughness: 0.5 }), new THREE.MeshPhysicalMaterial({ color: 0xff9a2e, roughness: 0.4, clearcoat: 0.4 })];
   const g = new THREE.Group();
   g.add(mesh(pingGeo, Math.random() < 0.2 ? pingMats[1] : pingMats[0]));
-  return g;
-}
-// 当たりで出てくるカプセル景品
-let capsuleParts = null;
-function capsuleMesh() {
-  capsuleParts ??= { geo: new THREE.SphereGeometry(0.03, 24, 12, 0, Math.PI * 2, 0, Math.PI / 2), clear: new THREE.MeshPhysicalMaterial({ color: 0xffffff, roughness: 0.1, transmission: 0, opacity: 0.55, transparent: true, clearcoat: 1 }) };
-  const g = new THREE.Group();
-  const top = mesh(capsuleParts.geo, capsuleParts.clear); g.add(top);
-  const bot = mesh(capsuleParts.geo, paint(pick([0xff4d6d, 0x2f9bff, 0xffc93c, 0x37c978]))); bot.rotation.x = Math.PI; g.add(bot);
-  g.add(ball(0.018, plushMat(pick(['#f2a3bf', '#ffd84a', '#9be3c8'])), 0, -0.005, 0));
   return g;
 }
 // Dリング付きの箱（上に樹脂のD形リング。リングの面は左右を向いている）
@@ -1825,6 +2009,12 @@ function dringBoxMesh() {
   const base = mesh(new THREE.BoxGeometry(0.012, 0.006, 0.02), M.darkMetal); base.position.y = H / 2 + 0.003; g.add(base);
   return g;
 }
+// たこ焼き台の景品（見本棚に並べ、あたりでどれか1つ）
+const TAKO_PRIZES = [
+  { name: 'ちびくま', kind: 'bear', scale: 0.75, lift: 0.045, make: () => PLUSH_KINDS.bear() },
+  { name: 'もちもち', kind: 'mochi', scale: 0.75, lift: 0.035, make: () => PLUSH_KINDS.mochi() },
+  { name: 'お菓子BOX', kind: 'box', scale: 0.75, lift: 0.045, make: () => PLUSH_KINDS.box() },
+];
 // たこ焼きプレート: 穴の位置（台のローカル座標）
 const TAKO = { PY: 0.02, A: 0.03, PX: 0.225, X0: -0.17, DX: 0.085, COLS: 5, ZS: [0.07, 0.13, 0.2, 0.26], DROP: { x: 0.0, z: 0.165 }, DOME_R: 0.034 };
 TAKO.holes = [];
@@ -1861,8 +2051,9 @@ const CLAW_PRESETS = {
   },
   bridge: {
     name: '橋渡しフィギュア', short: '橋渡し', base: 'pit', bridge: true, noHold: true,
-    shell: { body: 0x2b2f3a, trim: 0xd9dde6, signSide: 0x111318, glow: 0x7ad7ff, hue: 0.55, sign: ['PRIZE FIGURE', '★ 橋渡し ★', '#2b2f3a', '#3a7bd5', '#2b2f3a'], panel: ['#14161c', '#262b36'], panelText: '箱をずらしてバーから落とせばGET！', backdrop: 'bridge' },
+    shell: { body: 0xf4f6fa, trim: 0x2f6fd8, signSide: 0x1d3f8a, glow: 0x9fd4ff, hue: 0.58, sign: ['PRIZE FIGURE', '★ 橋渡しフィギュア ★', '#2f6fd8', '#7a5cff', '#2f6fd8'], panel: ['#14244a', '#1f3a7a'], panelText: '箱の端をまたいで持ち上げ、少しずつずらして落とそう', backdrop: 'bridge' },
     K: { N: 2, R0: 0.03, ARM: 0.17, TIP: 0.035, TIP_ANG: 70 * Math.PI / 180, OPEN: 0.62, REST: 0.05, CLOSED: 0.03, GRIP: 2.2, WEIGHT: 9.0, SLACK_T: 0.5, PRESS: true },
+    views: { front: [[0, 0.9, 1.6], [0, 0.18, 0]] },   // 箱の窓とバーが見えるよう少し上から
     home: { x: -0.33, z: 0.30 },
   },
   ufo2: {
@@ -1890,10 +2081,10 @@ const CLAW_PRESETS = {
   },
 };
 const TAIWAN = { SHIELD_Z: 0.2, SHIELD_H: 0.1, STEP_Y: 0.16, STEP_Z: -0.17 };
-// 手前と奥の2本のバー。すき間 0.106 は箱の厚み 0.10 よりわずかに広く、箱の長さ 0.24 より狭い（縦にしないと落ちない）
-const BRIDGE = { Y: 0.14, Z: 0.065, R: 0.012, HALF: 0.26 };
+// 手前と奥の2本のバー。すき間 0.128 は箱の厚み 0.12 よりわずかに広く、箱の長さ 0.28 より狭い（縦にしないと落ちない）
+const BRIDGE = { Y: 0.14, Z: 0.078, R: 0.014, HALF: 0.45, BOX: [0.18, 0.12, 0.28] };
 const taiwanBackdrop = makePegBackdrop('台湾キャッチャー', 'つかんで投げる！手前に落ちたらGET', '#2a1410', '#ffb13d');
-const bridgeBackdrop = makePegBackdrop('PRIZE FIGURE', '箱をずらしてバーから落とせばGET', '#1d2230', '#7ad7ff');
+const bridgeBackdrop = makePegBackdrop('PRIZE FIGURE', 'バーの間に落とせばGET！', '#e9eef7', '#2f6fd8');
 const takoBackdrop = makePegBackdrop('たこ焼きボール', 'あたりの穴にボールが入ればGET', '#2a1608', '#ffb35c');
 const dringBackdrop = makePegBackdrop('D-RING CATCH', '爪をリングに通して持ち上げよう', '#1a1436', '#b9a6ff');
 
@@ -2010,21 +2201,22 @@ class ClawMachine extends Machine {
     }
     if (P.takoyaki) this.buildTakoyaki();
     if (P.bridge) {
-      // 橋渡し: 手前と奥に平行なゴム巻きのバー。箱がその間に落ちれば GET
-      const bar = new THREE.MeshStandardMaterial({ color: 0x1a1a1e, roughness: 0.7 });
+      // 橋渡し: 手前と奥に平行な2本のバー（台の幅いっぱい、左右の壁に金具で固定）。
+      // 滑り止めのピンクのゴムチューブを巻いてある。箱がバーの間（または外）に落ちれば GET
+      const tube = new THREE.MeshPhysicalMaterial({ color: 0xff7eb0, roughness: 0.55, clearcoat: 0.3, sheen: 0.4, sheenColor: 0xffffff });
       for (const sz of [-1, 1]) {
         const z = sz * BRIDGE.Z;
-        const b = new CANNON.Body({ mass: 0, material: PM.stat, collisionFilterGroup: G_STATIC, collisionFilterMask: G_PRIZE | G_CLAW });
+        const b = new CANNON.Body({ mass: 0, material: PM.rubber, collisionFilterGroup: G_STATIC, collisionFilterMask: G_PRIZE | G_CLAW });
         const q = new CANNON.Quaternion(); q.setFromAxisAngle(v3(0, 0, 1), Math.PI / 2);
         b.addShape(new CANNON.Cylinder(BRIDGE.R, BRIDGE.R, BRIDGE.HALF * 2, 16), v3(0, 0, 0), q);
         b.position.set(0, BRIDGE.Y, z);
         w.addBody(b);
-        const m = mesh(new THREE.CylinderGeometry(BRIDGE.R, BRIDGE.R, BRIDGE.HALF * 2, 24), bar); m.rotation.z = Math.PI / 2; m.position.set(0, BRIDGE.Y, z); g.add(m);
+        const core = mesh(new THREE.CylinderGeometry(BRIDGE.R * 0.7, BRIDGE.R * 0.7, BRIDGE.HALF * 2, 20), M.chrome); core.rotation.z = Math.PI / 2; core.position.set(0, BRIDGE.Y, z); g.add(core);
+        const m = mesh(new THREE.CylinderGeometry(BRIDGE.R, BRIDGE.R, BRIDGE.HALF * 2 - 0.08, 28), tube); m.rotation.z = Math.PI / 2; m.position.set(0, BRIDGE.Y, z); g.add(m);
         for (const sx of [-1, 1]) {
-          const post = mesh(new THREE.CylinderGeometry(0.01, 0.01, BRIDGE.Y - PIT_Y, 14), M.chrome);
-          post.position.set(sx * (BRIDGE.HALF + 0.01), (BRIDGE.Y + PIT_Y) / 2, z); g.add(post);
-          staticBox(w, sx * (BRIDGE.HALF + 0.01) - 0.01, sx * (BRIDGE.HALF + 0.01) + 0.01, PIT_Y, BRIDGE.Y + 0.03, z - 0.01, z + 0.01);
-          const cap = mesh(new THREE.CylinderGeometry(0.018, 0.018, 0.02, 16), M.chrome); cap.rotation.z = Math.PI / 2; cap.position.set(sx * (BRIDGE.HALF + 0.01), BRIDGE.Y, z); g.add(cap);
+          // 壁の金具
+          boxMesh(sx * BRIDGE.HALF - 0.012, sx * BRIDGE.HALF + 0.012, BRIDGE.Y - 0.035, BRIDGE.Y + 0.02, z - 0.022, z + 0.022, M.brushed, g, { round: 0.004 });
+          const bolt = mesh(new THREE.CylinderGeometry(0.005, 0.005, 0.03, 10), M.darkMetal); bolt.rotation.z = Math.PI / 2; bolt.position.set(sx * (BRIDGE.HALF - 0.012), BRIDGE.Y - 0.02, z); g.add(bolt);
         }
       }
     }
@@ -2245,6 +2437,30 @@ class ClawMachine extends Machine {
     const plate = new THREE.Mesh(new THREE.PlaneGeometry(2 * T.PX, 0.30), new THREE.MeshStandardMaterial({ map: plateTex, roughness: 0.55, metalness: 0.6 }));
     plate.rotation.x = -Math.PI / 2; plate.position.set(0, T.PY + 0.0005, 0.15); plate.receiveShadow = true; g.add(plate);
     boxMesh(-T.PX, T.PX, 0, T.PY, 0, 0.30, M.darkMetal, g, { cast: false });
+    // 景品の見本棚（奥の壁）。あたりが出ると、目印の付いた「今回の景品」が取り出し口に出てくる
+    boxMesh(-0.42, 0.42, 0.3, 0.315, -0.395, -0.32, M.paintWhite, g, { round: 0.004 });
+    const sign = new THREE.Mesh(new THREE.PlaneGeometry(0.62, 0.075), new THREE.MeshStandardMaterial({
+      emissive: 0xffffff, emissiveIntensity: 0.5, roughness: 0.5,
+      map: canvasTex(1024, 124, (c, W, Hh) => { c.fillStyle = '#d6312b'; c.fillRect(0, 0, W, Hh); c.fillStyle = '#ffd23f'; c.font = `900 66px ${FONT}`; c.textAlign = 'center'; c.fillText('あたりで この景品をプレゼント！', W / 2, 86); }),
+    }));
+    sign.material.emissiveMap = sign.material.map;
+    sign.position.set(0, 0.47, -0.395); g.add(sign);
+    this.showcase = TAKO_PRIZES.map((pz, i) => {
+      const m = pz.make(); m.scale.multiplyScalar(pz.scale);
+      m.position.set(-0.27 + i * 0.27, 0.315 + pz.lift, -0.355); m.rotation.y = 0.25 - i * 0.25;
+      m.traverse(o => { if (o.isMesh) o.castShadow = true; });
+      addFur(m); g.add(m);
+      const tag = new THREE.Mesh(new THREE.PlaneGeometry(0.16, 0.03), new THREE.MeshBasicMaterial({
+        map: canvasTex(512, 96, (c, W, Hh) => { c.fillStyle = '#fff'; c.fillRect(0, 0, W, Hh); c.fillStyle = '#333'; c.font = `900 56px ${FONT}`; c.textAlign = 'center'; c.fillText(pz.name, W / 2, 70); }),
+      }));
+      tag.position.set(-0.27 + i * 0.27, 0.3, -0.318); g.add(tag);
+      return m;
+    });
+    this.nowTag = new THREE.Mesh(new THREE.PlaneGeometry(0.14, 0.04), new THREE.MeshBasicMaterial({
+      color: new THREE.Color(0xffffff).multiplyScalar(1.6),
+      map: canvasTex(512, 140, (c, W, Hh) => { c.fillStyle = '#ffd23f'; c.fillRect(0, 0, W, Hh); c.fillStyle = '#d6312b'; c.font = `900 84px ${FONT}`; c.textAlign = 'center'; c.fillText('今回はコレ！', W / 2, 102); }),
+    }));
+    g.add(this.nowTag);
     // あたりの穴の光る輪（ラウンドごとに場所が変わる）
     this.atariMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(0xff3030).multiplyScalar(3) });
     this.atariRings = [0].map(() => {
@@ -2264,6 +2480,8 @@ class ClawMachine extends Machine {
   // 新しいラウンド: あたりの穴を1つ選ぶ
   newRound() {
     this.atari = [(Math.random() * TAKO.holes.length) | 0];
+    this.prizeIdx = (Math.random() * TAKO_PRIZES.length) | 0;
+    this.nowTag.position.set(-0.27 + this.prizeIdx * 0.27, 0.44, -0.33);
     this.atari.forEach((hi, k) => this.atariRings[k].position.set(TAKO.holes[hi].x, TAKO.PY + 0.001, TAKO.holes[hi].z));
     this.hitT = 0;
   }
@@ -2293,10 +2511,13 @@ class ClawMachine extends Machine {
       }
       this.awardWin();
       this.S.plink?.();
-      const cap = new CANNON.Body({ mass: 0.05, material: PM.box, collisionFilterGroup: G_PRIZE, collisionFilterMask: G_STATIC | G_PRIZE, linearDamping: 0.05 });
-      cap.addShape(new CANNON.Sphere(0.03));
-      cap.position.set(rnd(-0.3, 0.3), -0.02, 0.36);
-      const cp = this.addPrize('capsule', capsuleMesh(), cap);
+      // 見本と同じ景品が取り出し口に落ちてくる
+      const pz = TAKO_PRIZES[this.prizeIdx];
+      const body = plushBody(pz.kind, pz.scale);
+      body.collisionFilterMask = G_STATIC | G_PRIZE;
+      body.position.set(rnd(-0.3, 0.3), -0.02, 0.36);
+      const gm = pz.make(); gm.scale.multiplyScalar(pz.scale);
+      const cp = this.addPrize('capsule', gm, body);
       cp.won = true;
       const caps = this.prizes.filter(c => c.kind === 'capsule');
       while (caps.length > 5) this.removePrize(caps.shift());
@@ -2322,9 +2543,10 @@ class ClawMachine extends Machine {
     }
   }
   spawnBridge() {
-    const b = new CANNON.Body({ mass: 0.3, material: PM.box, collisionFilterGroup: G_PRIZE, collisionFilterMask: G_STATIC | G_CLAW | G_PRIZE, linearDamping: 0.05, angularDamping: 0.2 });
-    b.addShape(new CANNON.Box(v3(0.08, 0.05, 0.12)));
-    b.position.set(rnd(-0.03, 0.03), BRIDGE.Y + BRIDGE.R + 0.051, rnd(-0.01, 0.01));
+    const [bw, bh, bd] = BRIDGE.BOX;
+    const b = new CANNON.Body({ mass: 0.4, material: PM.box, collisionFilterGroup: G_PRIZE, collisionFilterMask: G_STATIC | G_CLAW | G_PRIZE, linearDamping: 0.05, angularDamping: 0.2 });
+    b.addShape(new CANNON.Box(v3(bw / 2, bh / 2, bd / 2)));
+    b.position.set(rnd(-0.03, 0.03), BRIDGE.Y + BRIDGE.R + bh / 2 + 0.001, rnd(-0.01, 0.01));
     b.quaternion.setFromEuler(0, rnd(-0.08, 0.08), 0);
     this.addPrize('figure', figureBoxMesh(), b);
   }
@@ -2706,11 +2928,39 @@ function hookCurve(yaw = 0) {
   return pts.map(p => p.applyQuaternion(q));
 }
 
+// リングフック台の種類。景品はジャンルごとにまとめ、台ごとにリングの大きさや向きが違う
+const RING_PRESETS = {
+  daily: {
+    name: '日用品リングフック', short: 'リングフック', hookYaw: 0,
+    shell: { body: 0x13a89e, signSide: 0x0b6e8c, glow: 0x3ee6ff, hue: 0.47, sign: ['RING HOOK', '★ 日用品リングフック ★', '#0fb5a5', '#2a9df4', '#1b4fd1'], panel: ['#0b3d4a', '#145a6e'] },
+    backdrop: () => pegBackdrop, panelText: 'リングをフックにかけて板を持ち上げるとGET！',
+    goods: ['tissue', 'toilet', 'kitchen', 'detergent', 'dish', 'toothpaste', 'shampoo', 'handsoap', 'sponge', 'wetwipe', 'trashbag'],
+  },
+  veg: {
+    name: '野菜リングフック', short: '野菜フック', hookYaw: -Math.PI / 2,
+    shell: { body: 0x3f9b3a, signSide: 0x1f5e1f, glow: 0x9cff6a, hue: 0.3, sign: ['VEGE HOOK', '★ 野菜リングフック ★', '#3fae3a', '#f2a51a', '#e2532b'], panel: ['#1d4a1a', '#2f6b25'] },
+    backdrop: () => vegBackdrop, panelText: '左向きフック！リングを横にゆらしてかけよう',
+    goods: ['melon', 'cabbage', 'onion', 'carrot', 'potato', 'tomato', 'corn', 'eggplant', 'broccoli', 'pumpkin'],
+  },
+  snack: {
+    name: 'お菓子リングフック', short: 'お菓子フック', hookYaw: 0, ringR: 0.034,
+    shell: { body: 0xff7eb6, signSide: 0xc2185b, glow: 0xffb3d9, hue: 0.9, sign: ['SWEETS HOOK', '★ お菓子リングフック ★', '#ff5fa2', '#ffc93c', '#ff7a3d'], panel: ['#5a1636', '#7a1d4a'] },
+    backdrop: () => snackBackdrop, panelText: 'リングが小さい！ フックの先を正確にねらおう',
+    goods: ['bigchips', 'chocobox', 'cookietin', 'gummy', 'senbei', 'sticks'],
+  },
+  drink: {
+    name: 'ドリンクリングフック', short: 'ドリンクフック', hookYaw: 0, ringYaw: Math.PI / 4, twistK: 0.0007,
+    shell: { body: 0x2f7bd8, signSide: 0x1a4a8a, glow: 0x8fd3ff, hue: 0.58, sign: ['DRINK HOOK', '★ ドリンクリングフック ★', '#2f9bff', '#3ee6ff', '#1b4fd1'], panel: ['#0e2550', '#1b3a7a'] },
+    backdrop: () => drinkBackdrop, panelText: 'リングが斜め前を向いている！ 向きを読んでかけよう',
+    goods: ['pet2l', 'cans6', 'juice', 'teabottle'],
+  },
+};
+
 class RingHookMachine extends Machine {
   constructor(x, opt = {}) {
-    const veg = opt.kind === 'veg';
+    const P = RING_PRESETS[opt.kind ?? 'daily'], sh = P.shell;
     super({
-      name: veg ? '野菜リングフック' : '日用品リングフック', short: veg ? '野菜フック' : 'リングフック', x,
+      name: P.name, short: P.short, x, z: opt.z ?? 0, rotY: opt.rotY ?? 0,
       home: { x: -0.33, z: 0.30 }, range: { xMax: 0.33, zMin: -0.30 }, speed: 0.18,
       dropHint: '離すとリングが下りるよ',
       views: {
@@ -2719,26 +2969,21 @@ class RingHookMachine extends Machine {
         top: [[0, 0.92, 0.55], [0, 0.18, 0]],
         depth: [[0.68, 0.46, 0.0], [0, 0.42, 0.0]],
       },
-      shell: veg ? {
-        base: 'pit', body: 0x3f9b3a, trim: 0xf7f7f2, signSide: 0x1f5e1f, interactive: true, lights: true, glow: 0x9cff6a, hue: 0.3, stripSat: 0.9,
-        signTex: signTexture('VEGE HOOK', '★ 野菜リングフック ★', '#3fae3a', '#f2a51a', '#e2532b'),
-        backdrop: vegBackdrop, panel: ['#1d4a1a', '#2f6b25'],
-        panelText: '左向きフック！リングを横にゆらしてかけよう',
-      } : {
-        base: 'pit', body: 0x13a89e, trim: 0xf7f7f2, signSide: 0x0b6e8c, interactive: true, lights: true, glow: 0x3ee6ff, hue: 0.47, stripSat: 0.9,
-        signTex: signTexture('RING HOOK', '★ 日用品リングフック ★', '#0fb5a5', '#2a9df4', '#1b4fd1'),
-        backdrop: pegBackdrop, panel: ['#0b3d4a', '#145a6e'],
-        panelText: 'リングをフックにかけて板を持ち上げるとGET！',
+      shell: {
+        base: 'pit', body: sh.body, trim: 0xf7f7f2, signSide: sh.signSide, interactive: true, lights: true, glow: sh.glow, hue: sh.hue, stripSat: 0.9,
+        signTex: signTexture(...sh.sign), backdrop: P.backdrop(), panel: sh.panel, panelText: P.panelText,
       },
     });
-    // フックの腕の向き（0: 手前、-π/2: 左）。リングはどちらの台でも正面を向いて吊られる
-    this.hookYaw = veg ? -Math.PI / 2 : 0;
+    this.P = P;
+    // フックの腕の向き（0: 手前、-π/2: 左）と、リングが吊られている向き（0: 正面、π/4: 斜め前）
+    this.hookYaw = P.hookYaw;
+    this.ringYaw = P.ringYaw ?? 0;
     // 真横カメラは②で奥へ動かす間だけ。リングが下り始めたら、フックとリングに寄った斜め上からの視点にする
     this.sideStates = ['move2'];
-    this.goodsKinds = veg ? ['melon', 'cabbage', 'onion', 'carrot', 'potato'] : ['tissue', 'toilet', 'kitchen', 'detergent', 'dish', 'toothpaste'];
+    this.goodsKinds = P.goods;
     this.K = {
       HEAD_TOP: 0.78, HEAD_DOWN: 0.535, DESC: 0.22, RISE: 0.16,
-      LINKS: 6, LINK: 0.034, RING_R: 0.05, RING_T: 0.0045,
+      LINKS: 6, LINK: 0.034, RING_R: P.ringR ?? 0.05, RING_T: 0.0045,
       LIFT_MAX: 28.0,         // 巻き上げモーターの限界 [N]。これを超えるとその場で止まる
       BOARD: [0.27, 0.012, 0.24], BOARD_Y: 0.20, ROD_Z: 0.085, ROD_R: 0.007,
       TRAY: [0.30, 0.008, 0.20], TRAY_Y: -0.06,   // 景品の上に横棒・板とのすき間を十分とる
@@ -2903,6 +3148,7 @@ class RingHookMachine extends Machine {
       this.ring.addShape(new CANNON.Box(v3(segHalf, K.RING_T, K.RING_T)), v3(R * Math.cos(a), R * Math.sin(a), 0), q);
     }
     this.ring.position.set(this.x, y + K.LINK / 2 - R, this.z);
+    this.ring.quaternion.setFromAxisAngle(v3(0, 1, 0), this.ringYaw);
     this.world.addBody(this.ring);
     this.world.addConstraint(new CANNON.PointToPointConstraint(this.links[K.LINKS - 1], v3(0, 0, 0), this.ring, v3(0, R + K.LINK / 2, 0)));
     this.ringVis = mesh(new THREE.TorusGeometry(R, K.RING_T, 14, 48), M.chrome);
@@ -3038,8 +3284,8 @@ class RingHookMachine extends Machine {
   // 揺れはガントリーの加減速・チェーン・接触だけから生まれる（人工的な力は加えない）
   ringTwist() {
     const r = this.ring, n = r.quaternion.vmult(v3(0, 0, 1));
-    const k = 0.00025, c = 0.00002;
-    const err = Math.atan2(n.x, n.z);
+    const k = this.P.twistK ?? 0.00025, c = 0.00002;
+    const err = Math.atan2(n.x, n.z) - this.ringYaw;   // チェーンをねじらずに吊ったときの向きからのずれ
     const wrapped = Math.atan2(Math.sin(2 * err), Math.cos(2 * err)) / 2;   // 表裏どちら向きでもよい
     r.torque.y += -k * wrapped - c * r.angularVelocity.y;
   }
@@ -3126,6 +3372,8 @@ new ClawMachine(-1.25, 'ufo2');
 const clawMachine = new ClawMachine(0);
 const ringMachine = new RingHookMachine(1.25);
 const vegMachine = new RingHookMachine(2.5, { kind: 'veg' });
+new RingHookMachine(3.75, { kind: 'snack' });
+new RingHookMachine(3.75, { kind: 'drink', ...ROW_B });
 new ClawMachine(2.5, 'dring', ROW_B);
 new ClawMachine(1.25, 'takoyaki', ROW_B);
 new ClawMachine(0, 'bridge', ROW_B);
