@@ -2712,8 +2712,7 @@ class RingHookMachine extends Machine {
         front: [[0, 0.56, 0.9], [0, 0.32, 0]],
         side: [[0.42, 0.36, 0.6], [0, 0.2, 0]],
         top: [[0, 0.92, 0.55], [0, 0.18, 0]],
-        // ②で奥へ動かすときの真横カメラ。左向きフックの台は、フックの口が見える左側から
-        depth: [[veg ? -0.62 : 0.68, 0.46, 0.0], [0, 0.42, 0.0]],
+        depth: [[0.68, 0.46, 0.0], [0, 0.42, 0.0]],
       },
       shell: veg ? {
         base: 'pit', body: 0x3f9b3a, trim: 0xf7f7f2, signSide: 0x1f5e1f, interactive: true, lights: true, glow: 0x9cff6a, hue: 0.3, stripSat: 0.9,
@@ -2729,6 +2728,9 @@ class RingHookMachine extends Machine {
     });
     // フックの腕の向き（0: 手前、-π/2: 左）。リングはどちらの台でも正面を向いて吊られる
     this.hookYaw = veg ? -Math.PI / 2 : 0;
+    // 左向きフックは横からだと掛かったか分かりにくいので、真横カメラは②で奥へ動かす間だけ。
+    // リングが下り始めたら正面に戻し、リングがフックの腕に掛かるところを正面から見せる
+    if (veg) this.sideStates = ['move2'];
     this.goodsKinds = veg ? ['melon', 'cabbage', 'onion', 'carrot', 'potato'] : ['tissue', 'toilet', 'kitchen', 'detergent', 'dish', 'toothpaste'];
     this.K = {
       HEAD_TOP: 0.78, HEAD_DOWN: 0.535, DESC: 0.22, RISE: 0.16,
@@ -3236,6 +3238,7 @@ let autoSide = false, sideCamOn = true, lastState = '';
 try { sideCamOn = localStorage.getItem('sideCam') !== 'off'; } catch (_) { /* 保存できない環境では既定のまま */ }
 const SIDE_STATES = ['move2', 'drop', 'grab', 'hold', 'wait'];
 function sideWanted(m) {
+  if (m.sideStates) return sideCamOn && m.sideStates.includes(m.state);
   return sideCamOn && (SIDE_STATES.includes(m.state) || (m.state === 'lift' && m.t < 0.7));
 }
 function toView(name, dur = 0.6) {
