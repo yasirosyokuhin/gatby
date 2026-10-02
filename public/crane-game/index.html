@@ -1246,7 +1246,7 @@ function refreshUI() {
   ui.machine.textContent = active ? active.short : '—';
   ui.credit.textContent = active ? active.credits : '—';
   const s = active?.state;
-  ui.b1.classList.toggle('off', !(s === 'ready1' || s === 'move1'));
+  ui.b1.classList.toggle('off', !(s === 'ready1' || s === 'move1' || (s === 'idle' && active.credits > 0)));
   ui.b2.classList.toggle('off', !(s === 'ready2' || s === 'move2'));
   for (const m of machines) m.drawDisplay();
 }
@@ -1464,7 +1464,7 @@ class Machine {
   hint(t) { if (active === this) setHint(t); }
   toWorld(v) { return this.group.localToWorld(v.clone()); }
   setState(s, hint) { this.state = s; this.t = 0; if (hint !== undefined) this.hint(hint); if (active === this) refreshUI(); }
-  idleHint() { return this.credits > 0 ? '' : '100円を入れてね'; }
+  idleHint() { return this.credits > 0 ? `① を押すと次のプレイ（のこり ${this.credits} 回）` : '100円を入れてね'; }
   insertCoin() {
     sfx.init();
     this.credits = Math.min(this.credits + 1, 99);
@@ -1483,6 +1483,8 @@ class Machine {
     this.setState('ready1', '① を押している間、右へ動くよ');
   }
   press(n, down) {
+    // クレジットが残っているときは、① を押すと次のプレイが始まる（そのまま横へ動き出す）
+    if (n === 1 && down && this.state === 'idle' && this.credits > 0) this.beginPlay();
     if (n === 1) this.b1 = down; else this.b2 = down;
     const b = n === 1 ? this.shell.btn1 : this.shell.btn2;
     b.cap.position.y = down ? b.baseY - 0.006 : b.baseY;
@@ -1531,8 +1533,8 @@ class Machine {
     this.state = 'idle';
     const r = this.restock?.();
     if (r && active === this && this.restockNotice) banner(typeof r === 'string' ? r : '店員さんが景品を補充しました', 'info');
-    if (this.credits > 0) this.beginPlay();
-    else { this.hint(this.idleHint()); refreshUI(); }
+    // 次のプレイは自動で始めない（クレジットはこの台に残る。待っている間は台を移動できる）
+    this.hint(this.idleHint()); refreshUI();
   }
   awardWin() {
     game.wins++;
@@ -1618,7 +1620,7 @@ class Machine {
   }
   lightButtons(elapsed) {
     const st = this.state, blink = 0.6 + 0.4 * Math.sin(elapsed * 9);
-    const l1 = st === 'ready1' ? blink * 1.4 : st === 'move1' ? 1.6 : 0.03;
+    const l1 = st === 'ready1' || (st === 'idle' && this.credits > 0) ? blink * 1.4 : st === 'move1' ? 1.6 : 0.03;
     const l2 = st === 'ready2' ? blink * 1.4 : st === 'move2' ? 1.6 : 0.03;
     this.shell.btn1.capMat.emissiveIntensity = l1; this.shell.btn1.sideMat.emissiveIntensity = l1 * 0.6;
     this.shell.btn2.capMat.emissiveIntensity = l2; this.shell.btn2.sideMat.emissiveIntensity = l2 * 0.6;
