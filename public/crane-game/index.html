@@ -1803,7 +1803,7 @@ const CLAW_PRESETS = {
   keychain: {
     name: 'マスコットいっぱい', short: 'マスコット', base: 'ufo',
     shell: { body: 0xffc93c, signSide: 0xe8590c, glow: 0xffe08a, hue: 0.14, sign: ['MINI MASCOT', '★ マスコットいっぱい ★', '#ffc93c', '#ff8a3d', '#ff5fa2'], panel: ['#5a3a08', '#7a4f0d'], panelText: 'ちいさなマスコットがいっぱい！' },
-    K: { R0: 0.022, ARM: 0.095, TIP: 0.035, HOLD: 0.28, GRIP: 1.6, HOLD_R: 0.07, HUB_R: 0.034, CLOSED: 0.14 },
+    K: { R0: 0.022, ARM: 0.095, TIP: 0.035, HOLD: 0.22, GRIP: 1.6, HOLD_R: 0.07, HUB_R: 0.034, CLOSED: 0.14 },
     scale: 0.55,
   },
 };
@@ -2141,7 +2141,7 @@ class ClawMachine extends Machine {
         else this.weak = rnd(0.25, 0.5);
         break;
       case 'bridge': this.weak = 1.0; break;
-      case 'keychain': this.weak = rnd(0.2, 0.75); break;
+      case 'keychain': this.weak = rnd(0.2, 0.65); break;
       default: this.weak = Math.random() < 0.15 ? 1.0 : rnd(0.2, 0.7);
     }
   }
