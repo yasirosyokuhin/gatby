@@ -2700,7 +2700,8 @@ class RingHookMachine extends Machine {
         front: [[0, 0.56, 0.9], [0, 0.32, 0]],
         side: [[0.42, 0.36, 0.6], [0, 0.2, 0]],
         top: [[0, 0.92, 0.55], [0, 0.18, 0]],
-        depth: [[0.68, 0.46, 0.0], [0, 0.42, 0.0]],
+        // ②で奥へ動かすときの真横カメラ。左向きフックの台は、フックの口が見える左側から
+        depth: [[veg ? -0.62 : 0.68, 0.46, 0.0], [0, 0.42, 0.0]],
       },
       shell: veg ? {
         base: 'pit', body: 0x3f9b3a, trim: 0xf7f7f2, signSide: 0x1f5e1f, interactive: true, lights: true, glow: 0x9cff6a, hue: 0.3, stripSat: 0.9,
