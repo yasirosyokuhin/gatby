@@ -576,7 +576,7 @@ function addFur(root) {
   root.traverse(o => { if (o.isMesh) { all.push(o); if (!Array.isArray(o.material) && o.material.userData.plush) parts.push(o); } });
   if (!parts.length) return;
   // 目・鼻・肉球など表面に付いた部品は、毛に埋もれないよう毛の長さだけ外へ出す（実物も毛の上に付いている）
-  const rad = o => o.geometry === sphereGeo ? Math.max(o.scale.x, o.scale.y, o.scale.z) : 0;
+  const rad = o => (o.geometry === sphereGeo || o.geometry === sphereHiGeo) ? Math.max(o.scale.x, o.scale.y, o.scale.z) : 0;
   const moves = [];
   for (const o of all) {
     let best = null, bestErr = Infinity;
@@ -590,10 +590,11 @@ function addFur(root) {
   }
   for (const [o, dv] of moves) o.position.add(dv);
   for (const o of parts) {
-    const src = (o.geometry === sphereGeo ? sphereLoGeo : o.geometry);
+    const isSphere = o.geometry === sphereGeo || o.geometry === sphereHiGeo;
+    const src = isSphere ? sphereLoGeo : o.geometry;
     const g0 = src.index ? src.toNonIndexed() : src.clone();
     const sc = o.scale;
-    if (Math.min(sc.x, sc.y, sc.z) < 0.012 && o.geometry === sphereGeo) continue;   // 目のまわりなど小さすぎる部品には付けない
+    if (Math.min(sc.x, sc.y, sc.z) < 0.012 && isSphere) continue;   // 目のまわりなど小さすぎる部品には付けない
     const pos = g0.attributes.position, nor = g0.attributes.normal, n = pos.count;
     const layers = [];
     for (let k = 1; k <= FUR.shells; k++) {
@@ -616,13 +617,14 @@ function paint(color) {
 // 形状ヘルパー
 // ============================================================
 const sphereGeo = new THREE.SphereGeometry(1, 24, 16);
+const sphereHiGeo = new THREE.SphereGeometry(1, 40, 26);   // 大きい部品（胴・頭）はなめらかに
 function mesh(geo, mat, { cast = true, receive = true } = {}) {
   const m = new THREE.Mesh(geo, mat);
   m.castShadow = cast; m.receiveShadow = receive;
   return m;
 }
 function ball(r, mat, x, y, z, sx = 1, sy = 1, sz = 1) {
-  const m = mesh(sphereGeo, mat);
+  const m = mesh(r >= 0.03 ? sphereHiGeo : sphereGeo, mat);
   m.scale.set(r * sx, r * sy, r * sz); m.position.set(x, y, z);
   return m;
 }
@@ -659,6 +661,7 @@ function mergeStatic(root, keep = []) {
   }
 }
 const v3 = (x, y, z) => new CANNON.Vec3(x, y, z);
+const toward = (v, target, step) => v + Math.sign(target - v) * Math.min(Math.abs(target - v), step);
 const at = (o, x, y, z) => { o.position.set(x, y, z); return o; };
 
 // ============================================================
@@ -873,22 +876,52 @@ function addObstacle(x0, x1, z0, z1) { obstacles.push({ x0, x1, z0, z1 }); }
 // ============================================================
 // ぬいぐるみ・景品（クレーン台）
 // ============================================================
+// ぬいぐるみの細部: 刺しゅう糸（細いチューブ）、つやのある目（白い光つき）、縫い付けタグ
+const threadMats = new Map();
+function threadMat(color) {
+  if (!threadMats.has(color)) threadMats.set(color, new THREE.MeshStandardMaterial({ color, roughness: 0.95 }));
+  return threadMats.get(color);
+}
+function stitch(points, color = '#2b1810', r = 0.0011) {
+  return mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(points.map(p => new THREE.Vector3(...p))), 20, r, 5, false), threadMat(color), { cast: false });
+}
+const eyeShine = new THREE.MeshBasicMaterial({ color: 0xffffff });
+function eye(g, r, x, y, z, sx = 1, sy = 1) {
+  g.add(ball(r, M.eye, x, y, z, sx, sy, 0.75));
+  const hl = ball(r * 0.28, eyeShine, x + r * 0.35, y + r * 0.35, z + r * 0.62); hl.castShadow = false; g.add(hl);
+}
+const tagMat = new THREE.MeshStandardMaterial({ color: 0xfafafa, roughness: 0.8, side: THREE.DoubleSide,
+  map: canvasTex(64, 96, (c, w, h) => { c.fillStyle = '#fafafa'; c.fillRect(0, 0, w, h); c.fillStyle = '#e03131'; c.fillRect(0, 0, w, 22); c.fillStyle = '#555'; c.fillRect(10, 40, 44, 4); c.fillRect(10, 54, 36, 4); c.fillRect(10, 68, 40, 4); }) });
+function tag(g, x, y, z, ry = 0) {
+  const t = mesh(new THREE.PlaneGeometry(0.011, 0.017), tagMat, { cast: false });
+  t.position.set(x, y, z); t.rotation.set(0.2, ry, 0.15); g.add(t);
+}
 function bearMesh(color, ribbon) {
   const g = new THREE.Group();
+  const base = new THREE.Color(color);
   const m = plushMat(color);
-  const light = plushMat(new THREE.Color(color).lerp(new THREE.Color(0xfff4e8), 0.6));
-  g.add(ball(0.048, m, 0, 0, 0, 1, 1.05, 0.92));
-  g.add(ball(0.041, m, 0, 0.072, 0.004));
+  const light = plushMat(base.clone().lerp(new THREE.Color(0xfff4e8), 0.6));
+  // 胴・頭（少しだけ左右非対称にして、綿の詰まり方のムラを出す）
+  g.add(ball(0.048, m, 0, 0, 0, 1.01, 1.04, 0.93));
+  g.add(ball(0.041, m, 0.001, 0.072, 0.004, 1.03, 0.98, 1));
   for (const s of [-1, 1]) {
-    g.add(ball(0.015, m, s * 0.03, 0.106, 0, 1, 1, 0.6));
-    g.add(ball(0.009, light, s * 0.03, 0.106, 0.006, 1, 1, 0.4));
-    g.add(ball(0.0055, M.eye, s * 0.0145, 0.082, 0.036));
+    // 耳: 外側と、内側の明るい布
+    g.add(ball(0.015, m, s * 0.031, 0.106, -0.002, 1, 1, 0.62));
+    g.add(ball(0.009, light, s * 0.031, 0.105, 0.006, 1, 1, 0.4));
+    eye(g, 0.0058, s * 0.0148, 0.0815, 0.0365);
+    // 腕・足と肉球
     const arm = ball(0.016, m, s * 0.046, 0.012, 0.012, 0.9, 1.6, 0.9); arm.rotation.z = s * 0.5; g.add(arm);
     g.add(ball(0.019, m, s * 0.026, -0.036, 0.026, 1, 0.9, 1.3));
     g.add(ball(0.011, light, s * 0.026, -0.036, 0.048, 1, 1, 0.35));
+    for (let k = -1; k <= 1; k++) g.add(ball(0.0032, light, s * 0.026 + k * 0.006, -0.026, 0.047, 1, 1, 0.5));
   }
+  // マズルと刺しゅうの鼻・口
   g.add(ball(0.017, light, 0, 0.062, 0.033, 1.15, 0.9, 0.75));
-  g.add(ball(0.0065, M.nose, 0, 0.068, 0.045, 1.2, 0.9, 0.8));
+  g.add(ball(0.0062, M.nose, 0, 0.0685, 0.0455, 1.3, 0.9, 0.8));
+  g.add(stitch([[0, 0.064, 0.046], [0, 0.058, 0.0465]]));
+  g.add(stitch([[-0.007, 0.0545, 0.0445], [-0.0035, 0.0565, 0.0462], [0, 0.058, 0.0465], [0.0035, 0.0565, 0.0462], [0.007, 0.0545, 0.0445]]));
+  // 縫い付けタグ
+  tag(g, 0.046, -0.02, 0.0, Math.PI / 2);
   if (ribbon) {
     const rm = new THREE.MeshPhysicalMaterial({ color: ribbon, roughness: 0.35, sheen: 0.6, sheenColor: 0xffffff, clearcoat: 0.3 });
     for (const s of [-1, 1]) { const r = ball(0.014, rm, s * 0.014, 0.034, 0.03, 1.1, 0.7, 0.45); r.rotation.z = s * 0.4; g.add(r); }
@@ -899,38 +932,50 @@ function bearMesh(color, ribbon) {
 function mochiMesh(color) {
   const g = new THREE.Group();
   const m = plushMat(color);
-  g.add(ball(0.054, m, 0, 0, 0, 1.05, 0.88, 1.0));
+  g.add(ball(0.054, m, 0, 0, 0, 1.05, 0.86, 1.0));
   for (const s of [-1, 1]) {
-    g.add(ball(0.0065, M.eye, s * 0.019, 0.01, 0.05, 1, 1.3, 0.6));
-    const b = ball(0.011, M.blush, s * 0.034, -0.004, 0.042, 1, 0.6, 0.3); b.castShadow = false; g.add(b);
+    eye(g, 0.0062, s * 0.019, 0.01, 0.0495, 1, 1.25);
+    const b = ball(0.011, M.blush, s * 0.034, -0.004, 0.043, 1, 0.6, 0.3); b.castShadow = false; g.add(b);
     g.add(ball(0.014, m, s * 0.05, -0.03, 0.01, 0.8, 0.6, 1.0));
   }
-  const mouth = new THREE.Mesh(new THREE.TorusGeometry(0.006, 0.0013, 8, 16, Math.PI), M.nose);
-  mouth.position.set(0, -0.004, 0.0535); mouth.rotation.z = Math.PI; g.add(mouth);
-  g.add(ball(0.01, m, 0, 0.05, -0.004, 1.2, 1.4, 1));
+  // 刺しゅうの口（にっこり）
+  g.add(stitch([[-0.007, -0.002, 0.0528], [-0.0035, -0.006, 0.0538], [0, -0.0072, 0.0541], [0.0035, -0.006, 0.0538], [0.007, -0.002, 0.0528]]));
+  g.add(ball(0.01, m, 0, 0.048, -0.004, 1.2, 1.4, 1));
+  tag(g, 0.05, -0.03, -0.02, Math.PI / 2);
   return g;
 }
 function catMesh(color, stripe) {
   const g = new THREE.Group();
-  const m = plushMat(color);
-  const body = mesh(new THREE.CapsuleGeometry(0.036, 0.085, 10, 28), m);
-  body.rotation.z = Math.PI / 2; g.add(body);
+  const base = new THREE.Color(color);
+  const m = plushMat(color), light = plushMat(base.clone().lerp(new THREE.Color(0xfff8f0), 0.65));
+  // 寝そべったねこ: 胴（パン形）、頭、前足、しっぽ
+  const body = mesh(new THREE.CapsuleGeometry(0.034, 0.075, 12, 32), m);
+  body.rotation.z = Math.PI / 2; body.position.set(-0.018, -0.004, 0); body.scale.set(0.95, 1, 1.05); g.add(body);
   if (stripe) {
     const sm = plushMat(stripe);
-    for (let i = -2; i <= 1; i++) {
-      const s = mesh(new THREE.TorusGeometry(0.0362, 0.006, 8, 30), sm);
-      s.rotation.y = Math.PI / 2; s.position.x = i * 0.022; g.add(s);
-    }
+    // しま模様は生地の色の違いなので、胴の表面にぴったり沿う平たい帯にする（盛り上がらない）
+    for (let i = -2; i <= 1; i++) { const s = mesh(new THREE.TorusGeometry(0.0322, 0.0042, 6, 48, Math.PI * 1.15), sm); s.rotation.set(0, Math.PI / 2, -Math.PI * 0.08); s.position.set(-0.03 + i * 0.02, -0.004, 0); s.scale.set(0.35, 1, 1.05); g.add(s); }
   }
-  const hx = 0.062;
+  const hx = 0.052;
+  g.add(ball(0.035, m, hx, 0.014, 0, 0.95, 0.92, 1.05));
+  g.add(ball(0.012, light, hx + 0.029, 0.004, 0, 0.6, 0.75, 1.3));   // 口まわり
   for (const s of [-1, 1]) {
-    const ear = mesh(new THREE.ConeGeometry(0.012, 0.022, 16), m);
-    ear.position.set(hx - 0.01, 0.034, s * 0.018); ear.rotation.z = -0.2; g.add(ear);
-    g.add(ball(0.0055, M.eye, hx + 0.031, 0.008, s * 0.014));
+    const ear = mesh(new THREE.ConeGeometry(0.012, 0.022, 20), m); ear.position.set(hx - 0.004, 0.045, s * 0.019); ear.rotation.set(s * 0.25, 0, -0.15); g.add(ear);
+    const inner = mesh(new THREE.ConeGeometry(0.007, 0.014, 16), plushMat('#ffb3c6')); inner.position.set(hx + 0.001, 0.043, s * 0.019); inner.rotation.set(s * 0.25, 0, -0.15); g.add(inner);
+    g.add(ball(0.0052, M.eye, hx + 0.03, 0.016, s * 0.013, 0.75, 1.15, 1));
+    const hl = ball(0.0015, eyeShine, hx + 0.0336, 0.0178, s * 0.013 + 0.0016); hl.castShadow = false; g.add(hl);
+    // 前足
+    g.add(ball(0.012, light, hx - 0.002, -0.03, s * 0.017, 1.4, 0.7, 1));
+    // ひげ
+    for (const dy of [-0.003, 0.002]) g.add(stitch([[hx + 0.033, 0.003 + dy, s * 0.008], [hx + 0.038, 0.004 + dy * 1.6, s * 0.03]], '#4a4a4a', 0.0005));
   }
-  g.add(ball(0.004, plushMat(0xff8fa3), hx + 0.036, -0.002, 0));
-  const tail = mesh(new THREE.CapsuleGeometry(0.008, 0.04, 6, 12), m);
-  tail.position.set(-0.088, 0.016, 0); tail.rotation.z = 0.9; g.add(tail);
+  g.add(ball(0.004, plushMat('#ff8fa3'), hx + 0.035, 0.008, 0));
+  g.add(stitch([[hx + 0.0355, 0.004, 0], [hx + 0.0355, -0.001, -0.004]], '#3a2a2a', 0.0007));
+  g.add(stitch([[hx + 0.0355, 0.004, 0], [hx + 0.0355, -0.001, 0.004]], '#3a2a2a', 0.0007));
+  // しっぽ（背中に沿って丸まる）
+  const tail = mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3([[-0.07, 0.0, -0.02], [-0.088, 0.012, -0.01], [-0.085, 0.025, 0.012], [-0.06, 0.03, 0.026]].map(p => new THREE.Vector3(...p))), 24, 0.008, 10, false), stripe ? plushMat(stripe) : m);
+  g.add(tail);
+  tag(g, -0.06, -0.025, 0.033, 0);
   return g;
 }
 function boxPrizeMesh(hue, name) {
@@ -1528,7 +1573,8 @@ function buildShell(g, o) {
 
   // ガントリーレール
   const railGeo = new THREE.CylinderGeometry(0.007, 0.007, 0.9, 16);
-  for (const z of [-0.37, 0.37]) { const r = mesh(railGeo, M.chrome); r.rotation.z = Math.PI / 2; r.position.set(0, 0.97, z); g.add(r); }
+  // 照明のすぐ下にあるので影は落とさない（落とすと床いっぱいに大きく伸びる）
+  for (const z of [-0.37, 0.37]) { const r = mesh(railGeo, M.chrome, { cast: false }); r.rotation.z = Math.PI / 2; r.position.set(0, 0.97, z); g.add(r); }
 
   // コントロールパネル
   const panel = new THREE.Group();
@@ -1602,8 +1648,11 @@ function buildGantry(g) {
   carriage.position.y = 0.935; g.add(carriage);
   const cable = mesh(new THREE.CylinderGeometry(0.0022, 0.0022, 1, 8), new THREE.MeshStandardMaterial({ color: 0x222226, roughness: 0.5, metalness: 0.4 }));
   g.add(cable);
+  // ガントリーは照明のすぐ下を動くので影を落とさない
+  for (const o of [bridge, carriage, cable]) setCast(o, false);
   return { bridge, carriage, cable };
 }
+function setCast(root, on) { root.traverse(o => { if (o.isMesh) o.castShadow = on; }); }
 const AX_Y = new THREE.Vector3(0, 1, 0), AX_Z = new THREE.Vector3(0, 0, 1);
 function placeCable(cable, x, z, bottom) {
   const top = new THREE.Vector3(x, 0.905, z);
@@ -2046,8 +2095,9 @@ const CLAW_PRESETS = {
   },
   taiwan: {
     name: '台湾キャッチャー', short: '台湾', base: 'pit', frontDrop: true,
-    shell: { body: 0xe8452c, trim: 0xffd23f, signSide: 0x8a1a12, glow: 0xffb13d, hue: 0.08, sign: ['TAIWAN CATCHER', '★ 台湾キャッチャー ★', '#e8452c', '#ffb13d', '#e8452c'], panel: ['#4a1208', '#7a1d0d'], panelText: 'つかんで投げる！ 手前に落ちたらGET', backdrop: 'taiwan' },
-    K: { ARM: 0.15, TIP: 0.05, TILT: -0.32, HOLD: 3.0 },
+    shell: { body: 0xe8452c, trim: 0xffd23f, signSide: 0x8a1a12, glow: 0xffb13d, hue: 0.08, sign: ['TAIWAN CATCHER', '★ 台湾キャッチャー ★', '#e8452c', '#ffb13d', '#e8452c'], panel: ['#4a1208', '#7a1d0d'], panelText: 'アームが奥へ投げる！ 山を崩して手前に落とせ', backdrop: 'taiwan' },
+    // アームは根元の金具で「斜め奥」を向いている（TILT > 0 で爪先が奥）。爪先はゴム
+    K: { ARM: 0.15, TIP: 0.05, TILT: 0.32, HOLD: 3.0 },
     home: { x: -0.3, z: 0.33 },
   },
   bridge: {
@@ -2084,7 +2134,7 @@ const CLAW_PRESETS = {
 const TAIWAN = { SHIELD_Z: 0.2, SHIELD_H: 0.1, STEP_Y: 0.16, STEP_Z: -0.17 };
 // 手前と奥の2本のバー。すき間 0.128 は箱の厚み 0.12 よりわずかに広く、箱の長さ 0.28 より狭い（縦にしないと落ちない）
 const BRIDGE = { Y: 0.14, Z: 0.078, R: 0.014, HALF: 0.45, BOX: [0.18, 0.12, 0.28] };
-const taiwanBackdrop = makePegBackdrop('台湾キャッチャー', 'つかんで投げる！手前に落ちたらGET', '#2a1410', '#ffb13d');
+const taiwanBackdrop = makePegBackdrop('台湾キャッチャー', '投げる・崩す・転がす！ 保夾で必ず取れる', '#2a1410', '#ffb13d');
 const bridgeBackdrop = makePegBackdrop('PRIZE FIGURE', 'バーの間に落とせばGET！', '#e9eef7', '#2f6fd8');
 const takoBackdrop = makePegBackdrop('たこ焼きボール', 'あたりの穴にボールが入ればGET', '#2a1608', '#ffb35c');
 const dringBackdrop = makePegBackdrop('D-RING CATCH', '爪をリングに通して持ち上げよう', '#1a1436', '#b9a6ff');
@@ -2610,8 +2660,12 @@ class ClawMachine extends Machine {
         else this.weak = 0.1;
         break;
       case 'taiwan':
-        if (this.plays >= this.ceiling) { this.weak = 1.0; this.plays = 0; this.ceiling = 6 + ((Math.random() * 6) | 0); }
-        else this.weak = rnd(0.25, 0.5);
+        // 保夾（保証取物）: 規定回数に達すると、景品が取れるまで毎回アームが強くなる
+        if (!this.guarantee && this.plays >= this.ceiling) {
+          this.guarantee = true;
+          if (active === this) { banner('保夾モード！', 'info'); sfx.win(); }
+        }
+        this.weak = this.guarantee ? 1.0 : rnd(0.25, 0.5);
         break;
       case 'bridge': this.weak = 1.0; break;
       case 'keychain': this.weak = rnd(0.2, 0.65); break;
@@ -2620,6 +2674,12 @@ class ClawMachine extends Machine {
       default: this.weak = Math.random() < 0.15 ? 1.0 : rnd(0.2, 0.7);
     }
   }
+  finishPlay() {
+    // 保夾モードは景品が取れたら終わり（回数を数え直す）
+    if (this.guarantee && game.wins > this.winsAtPlay) { this.guarantee = false; this.plays = 0; this.ceiling = 6 + ((Math.random() * 6) | 0); }
+    super.finishPlay();
+  }
+  idleHint() { return this.guarantee ? '保夾モード中！ 取れるまでアームが強いよ' + (this.credits > 0 ? '（① でスタート）' : '') : super.idleHint(); }
   aimOrigin() { return new THREE.Vector3(this.x + this.sway.x, this.y - 0.02, this.z + this.sway.z); }
   aimTargets() { return [...this.prizes.map(p => p.group), ...this.aimSurfaces]; }
   onDrop() { this.slack = 0; this.setState('drop', ''); }
@@ -2712,11 +2772,13 @@ class ClawMachine extends Machine {
   tryHold() {
     const hub = this.hubBody.position, tipY = this.tipLowestY(), K = this.K;
     let best = null;
+    // 保夾モード（台湾キャッチャー）は確実につかむ: 爪1本が触れていればよく、つかめる範囲も広い
+    const minTouch = this.guarantee ? 1 : 2, holdR = this.guarantee ? K.HOLD_R * 1.6 : K.HOLD_R;
     for (const [body, set] of this.touching) {
-      if (set.size < 2) continue;
+      if (set.size < minTouch) continue;
       const off = Math.hypot(body.position.x - hub.x, body.position.z - hub.z);
-      if (off > K.HOLD_R || body.position.y > hub.y || body.position.y < tipY - 0.06) continue;
-      const quality = (set.size === K.N ? 1 : 0.72) * (1 - 0.45 * Math.min(1, off / K.HOLD_R));
+      if (off > holdR || body.position.y > hub.y || body.position.y < tipY - 0.06) continue;
+      const quality = this.guarantee ? 1 : (set.size === K.N ? 1 : 0.72) * (1 - 0.45 * Math.min(1, off / K.HOLD_R));
       if (!best || quality > best.quality) best = { body, quality };
     }
     if (!best) return;
@@ -2741,7 +2803,7 @@ class ClawMachine extends Machine {
     switch (this.state) {
       case 'drop':
         this.openAll(2.4, h);
-        this.tilt = Math.min(0, this.tilt + 1.2 * h);   // 下りるときはアームがまっすぐ下を向く
+        this.tilt = toward(this.tilt, 0, 1.2 * h);   // 下りるときはアームがまっすぐ下を向く
         if (this.t > 0.3) {
           this.slack = this.landForce > K.WEIGHT ? this.slack + h : Math.max(0, this.slack - h * 0.5);
           if (this.slack > K.SLACK_T || this.barHit.some(Boolean) || this.tipLowestY() <= this.floorY() + 0.006) {
@@ -2768,17 +2830,18 @@ class ClawMachine extends Machine {
         if (this.y >= K.HUB_TOP) { this.y = K.HUB_TOP; this.S.clank(); this.sag0 = [...this.theta]; this.setState(this.P.frontDrop && this.weak < 1 ? 'fling' : 'relax'); }
         break;
       case 'fling': {
-        // 台湾キャッチャー: 上まで来るとアームの力が抜け（天井に達した回だけは抜けずに取り出し口まで運ぶ）、斜めに傾いた基本姿勢へ一気に戻る。
-        // その勢いで景品が手前へ放り出される（つかんだ位置しだいで、取り出し口に届くか山に当たるか）
+        // 台湾キャッチャー: 上まで来るとアームの力が抜け、根元の金具とばねで「斜め奥」を向いた基本姿勢へ一気に戻る。
+        // その勢いで景品は後ろ（奥）へ放り投げられる。奥の山に当たって崩れた景品が、手前のシールドを越えて落ちることがある。
+        // 保夾（保証）モードの回だけは力が抜けず、取り出し口まで運ぶ
         const SNAP = 0.14, prevTilt = this.tilt;
-        this.tilt = Math.max(K.TILT, this.tilt - (Math.abs(K.TILT) / SNAP) * h);
+        this.tilt = toward(this.tilt, K.TILT, (Math.abs(K.TILT) / SNAP) * h);
         if (this.held && this.t > SNAP * 0.55) {
           const b = this.held.body, L = Math.max(0.08, this.y - b.position.y + 0.05);
           const v = L * Math.abs(this.tilt - prevTilt) / h;   // 爪先の速さ
           this.letGo();
-          b.velocity.set(rnd(-0.3, 0.3), rnd(0.1, 0.35), v * rnd(0.55, 1.25));
+          b.velocity.set(rnd(-0.3, 0.3), rnd(0.15, 0.4), -v * rnd(0.6, 1.3));
           b.angularVelocity.set(rnd(-10, 10), rnd(-6, 6), rnd(-6, 6));
-          this.sway.vz -= 0.25;
+          this.sway.vz += 0.25;
           this.S.clank();
         }
         this.openAll(4.0, h, K.OPEN + 0.2);
@@ -2815,7 +2878,7 @@ class ClawMachine extends Machine {
         break;
       }
       case 'reset':
-        this.tilt = Math.max(K.TILT, this.tilt - 1.2 * h);
+        this.tilt = toward(this.tilt, K.TILT, 1.2 * h);
         for (let i = 0; i < K.N; i++) this.theta[i] += Math.sign(K.REST - this.theta[i]) * Math.min(Math.abs(K.REST - this.theta[i]), 2.4 * h);
         if (this.t > 0.5) this.finishPlay();
         break;
@@ -2895,6 +2958,10 @@ class ClawMachine extends Machine {
     const L = Math.max(0.08, 0.93 - this.y);
     this.hubVis.rotation.set(this.sway.z / L * 0.8 + this.tilt, 0, -this.sway.x / L * 0.8);
     pose.prongs.forEach((p, i) => { this.prongVis[i].position.copy(p.pos); this.prongVis[i].quaternion.copy(p.q); });
+    // 照明は天井のすぐ下なので、アームが高い位置にあると影が床に大きく引き伸ばされる。
+    // 爪先が床や景品の近くに来たときだけ影を落とす（そのときの影は爪とほぼ同じ大きさ）
+    const near = this.tipLowestY() - this.floorY() < 0.22;
+    if (near !== this.clawShadow) { this.clawShadow = near; setCast(this.hubVis, near); for (const p of this.prongVis) setCast(p, near); }
     this.gantry.carriage.position.set(this.x, 0.935, this.z);
     this.gantry.bridge.position.x = this.x;
     placeCable(this.gantry.cable, this.x, this.z, pose.hub.clone().add(new THREE.Vector3(0, 0.077 * this.K.HUB_R / 0.044, 0)));
@@ -3126,6 +3193,7 @@ class RingHookMachine extends Machine {
     const lamp = mesh(new THREE.CylinderGeometry(0.012, 0.012, 0.006, 20), new THREE.MeshBasicMaterial({ color: new THREE.Color(0x3ee6ff).multiplyScalar(3) }));
     lamp.position.set(0, 0, 0.036); lamp.rotation.x = Math.PI / 2; this.headVis.add(lamp);
     g.add(this.headVis);
+    setCast(this.headVis, false);   // 照明のすぐ下を動くので影は落とさない
     // ボールチェーン（質点を距離拘束でつなぐ）
     this.links = [];
     let y = this.y - 0.03 - K.LINK / 2;
@@ -3345,6 +3413,9 @@ class RingHookMachine extends Machine {
     this.beadsAlong(this.chainBeads, pts, 0.0075);
     this.ringVis.position.set(rp.x, rp.y, rp.z);
     this.ringVis.quaternion.set(rq.x, rq.y, rq.z, rq.w);
+    // リングとチェーンも、板の近くまで下りたときだけ影を落とす
+    const near = rp.y < this.K.BOARD_Y + 0.22;
+    if (near !== this.ringShadow) { this.ringShadow = near; this.ringVis.castShadow = near; this.chainBeads.castShadow = near; }
     // 板とトレーをつなぐチェーン（たるんでいるときは少し垂らす）
     const wa = this.board.pointToWorldFrame(this.ropeA), wb = this.tray.pointToWorldFrame(this.ropeB);
     const A = new THREE.Vector3(wa.x, wa.y, wa.z), B = new THREE.Vector3(wb.x, wb.y, wb.z);
@@ -3964,7 +4035,7 @@ async function boot() {
   // デバッグ・テスト用
   window.__crane = {
     game, machines, player, camera, controls, aim, renderer, composer, scene,
-    get active() { return active; }, get mode() { return mode; }, get near() { return near; },
+    get active() { return active; }, get mode() { return mode; }, get near() { return near; }, kinds: PLUSH_KINDS, addFur, THREE,
     enter(i) { enterPlay(machines[i]); },
     exit() { exitPlay(); },
     finishTween() { if (tween) { tween.t = 1; updateTween(0); } },
