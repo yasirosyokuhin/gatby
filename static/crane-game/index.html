@@ -480,10 +480,11 @@ function buttonTopTex(label, num, color) {
 // マテリアル
 // ============================================================
 const M = {
-  chrome: new THREE.MeshStandardMaterial({ color: 0xe8e8ef, metalness: 1, roughness: 0.12 }),
+  // 台のシルバー部分。鏡面だと照明が映り込んでまぶしいので、少しくもらせて映り込みを弱める
+  chrome: new THREE.MeshStandardMaterial({ color: 0xc9ccd4, metalness: 0.9, roughness: 0.34, envMapIntensity: 0.55 }),
   // アームは鏡面だと天井の照明を映して眩しいので、少しつや消しの金属にする
   clawMetal: new THREE.MeshStandardMaterial({ color: 0xaeb2bc, metalness: 0.85, roughness: 0.38, envMapIntensity: 0.6 }),
-  brushed: new THREE.MeshStandardMaterial({ color: 0xbfc3cc, metalness: 1, roughness: 0.35 }),
+  brushed: new THREE.MeshStandardMaterial({ color: 0xb4b8c1, metalness: 0.85, roughness: 0.5, envMapIntensity: 0.5 }),
   darkMetal: new THREE.MeshStandardMaterial({ color: 0x2a2a30, metalness: 0.8, roughness: 0.45 }),
   rubber: new THREE.MeshStandardMaterial({ color: 0x18181b, metalness: 0, roughness: 0.85 }),
   paintWhite: new THREE.MeshPhysicalMaterial({ color: 0xf4f1f7, roughness: 0.35, clearcoat: 0.8, clearcoatRoughness: 0.15 }),
