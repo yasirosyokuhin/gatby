@@ -805,7 +805,7 @@ const noSfx = new Proxy({}, { get: () => () => {} });
 // ============================================================
 // 店内
 // ============================================================
-const ROOM = { x0: -3.25, x1: 4.6, z0: -1.1, z1: 4.0 };
+const ROOM = { x0: -4.5, x1: 5.85, z0: -1.1, z1: 4.0 };
 const obstacles = [];   // 歩行時の当たり判定（XZ平面の矩形）
 function addObstacle(x0, x1, z0, z1) { obstacles.push({ x0, x1, z0, z1 }); }
 {
@@ -826,7 +826,7 @@ function addObstacle(x0, x1, z0, z1) { obstacles.push({ x0, x1, z0, z1 }); }
   ceil.rotation.x = Math.PI / 2; ceil.position.set(cx, ROOM_FLOOR + wallH, cz);
   scene.add(ceil);
   const panelMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(0xfff2e0).multiplyScalar(4) });
-  for (const x of [-2.2, -0.6, 1.0, 2.6, 4.0]) for (const z of [0.9, 2.5]) {
+  for (const x of [-3.8, -2.2, -0.6, 1.0, 2.6, 4.0, 5.4]) for (const z of [0.9, 2.5]) {
     const p = new THREE.Mesh(new THREE.PlaneGeometry(0.9, 0.25), panelMat);
     p.rotation.x = Math.PI / 2; p.position.set(x, ROOM_FLOOR + wallH - 0.01, z);
     scene.add(p);
@@ -2059,6 +2059,25 @@ function dringBoxMesh() {
   const base = mesh(new THREE.BoxGeometry(0.012, 0.006, 0.02), M.darkMetal); base.position.y = H / 2 + 0.003; g.add(base);
   return g;
 }
+// ペラ（穴のあいた紙のタグ）とプラスチックのループ。yz 平面に立てる（面は左右を向く）
+let peraTagTex = null;
+function peraTagMesh(top, S) {
+  const { RZ, RH } = PERA, g = new THREE.Group();
+  peraTagTex ??= canvasTex(256, 256, (c, W, Hh) => {
+    c.clearRect(0, 0, W, Hh);
+    c.fillStyle = '#fff'; c.beginPath(); c.roundRect(8, 8, W - 16, Hh - 16, 24); c.fill();
+    c.fillStyle = '#f783ac'; c.fillRect(8, Hh - 70, W - 16, 52);
+    c.fillStyle = '#fff'; c.font = `900 34px ${FONT}`; c.textAlign = 'center'; c.fillText('もちもち', W / 2, Hh - 32);
+    c.globalCompositeOperation = 'destination-out'; c.beginPath(); c.arc(W / 2, 100, 62, 0, 7); c.fill();
+  });
+  const card = mesh(new THREE.PlaneGeometry(RZ * 2.6, RH * 1.6), new THREE.MeshStandardMaterial({ map: peraTagTex, transparent: true, alphaTest: 0.5, side: THREE.DoubleSide, roughness: 0.7 }), { cast: false });
+  card.rotation.y = Math.PI / 2; card.position.set(0, top + RH * 0.62, 0);
+  const loop = mesh(new THREE.TorusGeometry(RZ * 0.92, 0.0018, 6, 32), new THREE.MeshPhysicalMaterial({ color: 0xffffff, roughness: 0.2, transparent: true, opacity: 0.7 }), { cast: false });
+  loop.rotation.y = Math.PI / 2; loop.position.set(0, top + RH * 0.55, 0);
+  g.add(card, loop);
+  g.scale.setScalar(1 / S);   // 親（ぬいぐるみ）の拡大を打ち消して、物理の寸法どおりにする
+  return g;
+}
 // たこ焼き台の景品（見本棚に並べ、あたりでどれか1つ）
 const TAKO_PRIZES = [
   { name: 'ちびくま', kind: 'bear', scale: 0.75, lift: 0.045, make: () => PLUSH_KINDS.bear() },
@@ -2130,7 +2149,37 @@ const CLAW_PRESETS = {
     // 爪は細く（リングに通るように）、つかんで保持はしない（リングに引っかけて持ち上げるだけ）
     K: { N: 2, R0: 0.028, ARM: 0.14, TIP: 0.045, TIP_ANG: 55 * Math.PI / 180, OPEN: 0.55, CLOSED: 0.02, GRIP: 3.0, WEIGHT: 3.0, PRONG_W: 0.008, SIDE_FORCE: true, PRESS: true, SLACK_T: 0.15, SAG: 0.25 },
   },
+  // ちゃぶ台: 小さな丸テーブルの上の大きなぬいぐるみを、押したり引っぱったりしてテーブルから落とす
+  chabudai: {
+    name: 'ちゃぶ台ぬいぐるみ', short: 'ちゃぶ台', base: 'pit', chabudai: true,
+    shell: { body: 0xff922b, trim: 0xfff4e0, signSide: 0x9a4a0a, glow: 0xffd08a, hue: 0.08, sign: ['CHABUDAI', '★ ちゃぶ台 ★', '#ff922b', '#ffd43b', '#e8590c'], panel: ['#5a2a0a', '#7a3d10'], panelText: 'テーブルから落とせばGET！ 押す・引っぱる・転がす', backdrop: 'chabudai' },
+    K: { R0: 0.045, ARM: 0.17, TIP: 0.06, OPEN: 0.75, GRIP: 3.5, HOLD: 3.0, HOLD_R: 0.15, HUB_R: 0.055, WEIGHT: 5.0 },
+  },
+  // 回転テーブル: ゆっくり回る円盤の上の景品を、タイミングを合わせてつかむ
+  turntable: {
+    name: 'くるくるテーブル', short: '回転', base: 'ufo', turntable: true,
+    shell: { body: 0x37b24d, signSide: 0x1b6b2c, glow: 0xa9e34b, hue: 0.33, sign: ['TURN TABLE', '★ くるくるテーブル ★', '#37b24d', '#ffd43b', '#1c7ed6'], panel: ['#123d1a', '#1f5a28'], panelText: 'テーブルが回っている！ タイミングを合わせてつかもう', backdrop: 'turntable' },
+    K: {},
+  },
+  // 段差前落とし: 段差のある台に並んだお菓子の箱を、手前へ押し出して落とす
+  maeotoshi: {
+    name: '段差おかし落とし', short: '段差', base: 'pit', steps: true,
+    shell: { body: 0xfab005, trim: 0x5a2d14, signSide: 0x8a5a0a, glow: 0xffe066, hue: 0.12, sign: ['STEP DROP', '★ 段差おかし落とし ★', '#fab005', '#e8590c', '#5a2d14'], panel: ['#4a2a08', '#6b3d0d'], panelText: '箱を手前の段から押し出せばGET！', backdrop: 'steps' },
+    K: { N: 2, R0: 0.03, ARM: 0.15, TIP: 0.05, TIP_ANG: 60 * Math.PI / 180, OPEN: 0.7, CLOSED: 0.03, HOLD: 1.6, WEIGHT: 4.0 },
+    home: { x: -0.33, z: 0.30 },
+  },
+  // ペラ輪: ぬいぐるみの頭に付いたタグ（ペラ）の穴に爪を通して持ち上げる
+  pera: {
+    name: 'ペラ輪キャッチ', short: 'ペラ輪', base: 'ufo', noHold: true, pera: true,
+    shell: { body: 0xf783ac, signSide: 0xa61e4d, glow: 0xffc9de, hue: 0.94, sign: ['TAG CATCH', '★ ペラ輪キャッチ ★', '#f783ac', '#ffd43b', '#4dabf7'], panel: ['#4a1530', '#6b1f45'], panelText: 'タグの穴に爪を通して持ち上げよう', backdrop: 'pera' },
+    K: { N: 2, R0: 0.028, ARM: 0.14, TIP: 0.045, TIP_ANG: 55 * Math.PI / 180, OPEN: 0.55, CLOSED: 0.02, GRIP: 3.0, WEIGHT: 3.0, PRONG_W: 0.008, SIDE_FORCE: true, PRESS: true, SLACK_T: 0.15, SAG: 0.3 },
+  },
 };
+// ちゃぶ台・回転テーブル・段差の寸法（台のローカル座標）
+const TABLE = { X: 0.05, Z: -0.02, R: 0.15, Y: 0.16 };
+const TURN = { X: 0.1, Z: -0.06, R: 0.26, Y: 0.03, W: 0.55 };
+const STEPS = [{ z0: -0.40, z1: -0.16, y: 0.14 }, { z0: -0.16, z1: 0.06, y: 0.07 }, { z0: 0.06, z1: 0.22, y: 0.02 }];
+const PERA = { RZ: 0.028, RH: 0.04, T: 0.0022, S: 1.25 };
 const TAIWAN = { SHIELD_Z: 0.2, SHIELD_H: 0.1, STEP_Y: 0.16, STEP_Z: -0.17 };
 // 手前と奥の2本のバー。すき間 0.128 は箱の厚み 0.12 よりわずかに広く、箱の長さ 0.28 より狭い（縦にしないと落ちない）
 const BRIDGE = { Y: 0.14, Z: 0.078, R: 0.014, HALF: 0.45, BOX: [0.18, 0.12, 0.28] };
@@ -2138,6 +2187,10 @@ const taiwanBackdrop = makePegBackdrop('台湾キャッチャー', '投げる・
 const bridgeBackdrop = makePegBackdrop('PRIZE FIGURE', 'バーの間に落とせばGET！', '#e9eef7', '#2f6fd8');
 const takoBackdrop = makePegBackdrop('たこ焼きボール', 'あたりの穴にボールが入ればGET', '#2a1608', '#ffb35c');
 const dringBackdrop = makePegBackdrop('D-RING CATCH', '爪をリングに通して持ち上げよう', '#1a1436', '#b9a6ff');
+const chabudaiBackdrop = makePegBackdrop('ちゃぶ台', 'テーブルから落とせばGET', '#f6e7d0', '#c2410c');
+const turnBackdrop = makePegBackdrop('くるくるテーブル', 'タイミングを合わせてつかもう', '#d8f0dc', '#2b8a3e');
+const stepsBackdrop = makePegBackdrop('段差おかし落とし', '手前の段から押し出してGET', '#fff3c4', '#b45309');
+const peraBackdrop = makePegBackdrop('ペラ輪キャッチ', 'タグの穴に爪を通そう', '#fde2ee', '#c2255c');
 
 class ClawMachine extends Machine {
   constructor(x, presetName = 'paradise', opt = {}) {
@@ -2150,7 +2203,7 @@ class ClawMachine extends Machine {
       shell: {
         base: P.base, body: sh.body, trim: sh.trim, signSide: sh.signSide, interactive: true, lights: true, glow: sh.glow, hue: sh.hue,
         signTex: signTexture(...sh.sign),
-        backdrop: { taiwan: taiwanBackdrop, bridge: bridgeBackdrop, tako: takoBackdrop, dring: dringBackdrop }[sh.backdrop] ?? plushBackdrop,
+        backdrop: { taiwan: taiwanBackdrop, bridge: bridgeBackdrop, tako: takoBackdrop, dring: dringBackdrop, chabudai: chabudaiBackdrop, turntable: turnBackdrop, steps: stepsBackdrop, pera: peraBackdrop }[sh.backdrop] ?? plushBackdrop,
         panel: sh.panel, panelText: sh.panelText,
       },
     });
@@ -2185,10 +2238,15 @@ class ClawMachine extends Machine {
     this.buildClaw();
     for (const b of [this.hubBody, ...this.prongBodies]) b.allowSleep = false;
     if (P.base === 'ufo') {
-      this.aimSurfaces = [
+      if (P.turntable) this.aimExtra = [aimDisc(this.group, TURN.X, TURN.Y + 0.0005, TURN.Z, TURN.R)];
+      this.aimSurfaces = [...(this.aimExtra ?? []),
         aimPlane(this.group, -0.45, 0.45, 0.0005, -0.40, HOLE.z0), aimPlane(this.group, HOLE.x1, 0.45, 0.0005, HOLE.z0, 0.40),
         aimPlane(this.group, -0.45, HOLE.x1, -0.659, HOLE.z0, 0.40),
       ];
+    } else if (P.chabudai) {
+      this.aimSurfaces = [aimDisc(this.group, TABLE.X, TABLE.Y + 0.0005, TABLE.Z, TABLE.R), aimPlane(this.group, -0.45, 0.45, PIT_Y + 0.001, -0.40, 0.40)];
+    } else if (P.steps) {
+      this.aimSurfaces = [...STEPS.map(st => aimPlane(this.group, -0.45, 0.45, st.y + 0.0005, st.z0, st.z1)), aimPlane(this.group, -0.45, 0.45, PIT_Y + 0.001, -0.40, 0.40)];
     } else if (P.takoyaki) {
       this.aimSurfaces = [aimPlane(this.group, -0.45, 0.45, 0.0005, -0.40, 0), aimPlane(this.group, -TAKO.PX, TAKO.PX, TAKO.PY + 0.0005, 0, 0.30)];
     } else {
@@ -2223,6 +2281,7 @@ class ClawMachine extends Machine {
       staticBox(w, -0.45, HOLE.x1, -0.40, 0, 0.40, 0.44);
       staticBox(w, -0.47, -0.19, -0.66, -0.40, 0.455, 0.475);
       staticBox(w, -0.47, -0.19, -0.72, -0.66, HOLE.z0 - 0.04, 0.48);
+      if (P.turntable) this.buildTurntable();
       return;
     }
     // 落下エリアのある台
@@ -2251,6 +2310,8 @@ class ClawMachine extends Machine {
       hz.material.map = M.hazard.map.clone(); hz.material.map.repeat.set(6, 1);
     }
     if (P.takoyaki) this.buildTakoyaki();
+    if (P.chabudai) this.buildChabudai();
+    if (P.steps) this.buildSteps();
     if (P.bridge) {
       // 橋渡し: 手前と奥に平行な2本のバー（台の幅いっぱい、左右の壁に金具で固定）。
       // 滑り止めのピンクのゴムチューブを巻いてある。箱がバーの間（または外）に落ちれば GET
@@ -2327,6 +2388,10 @@ class ClawMachine extends Machine {
       case 'keychain': this.spawn(30); break;
       case 'takoyaki': this.spawnBalls(56); this.newRound(); break;
       case 'dring': this.spawnDring(6); break;
+      case 'chabudai': this.spawnChabudai(); break;
+      case 'turntable': this.spawnTurntable(9); break;
+      case 'maeotoshi': this.spawnSteps(10); break;
+      case 'pera': this.spawnPera(5); break;
       case 'ufo2': this.spawn(15); break;
       default: this.spawn(17);
     }
@@ -2519,6 +2584,102 @@ class ClawMachine extends Machine {
       r.rotation.x = -Math.PI / 2; g.add(r); return r;
     });
   }
+  // ちゃぶ台: 木の丸テーブルと支柱。テーブルの外へ落ちれば GET
+  buildChabudai() {
+    const w = this.world, g = this.group, T = TABLE;
+    const top = new CANNON.Body({ mass: 0, material: PM.stat, collisionFilterGroup: G_STATIC, collisionFilterMask: G_PRIZE | G_CLAW });
+    top.addShape(new CANNON.Cylinder(T.R, T.R, 0.02, 24)); top.position.set(T.X, T.Y - 0.01, T.Z); w.addBody(top);
+    const leg = new CANNON.Body({ mass: 0, material: PM.stat, collisionFilterGroup: G_STATIC, collisionFilterMask: G_PRIZE | G_CLAW });
+    leg.addShape(new CANNON.Cylinder(0.03, 0.04, T.Y - PIT_Y - 0.02, 12)); leg.position.set(T.X, (T.Y + PIT_Y) / 2 - 0.01, T.Z); w.addBody(leg);
+    const wood = new THREE.MeshStandardMaterial({ roughness: 0.55, map: canvasTex(512, 512, (c, W, Hh) => {
+      c.fillStyle = '#9c5b2e'; c.fillRect(0, 0, W, Hh);
+      for (let r = 8; r < W / 2; r += 7 + Math.random() * 6) { c.strokeStyle = `rgba(60,30,10,${0.15 + Math.random() * 0.2})`; c.lineWidth = 2; c.beginPath(); c.arc(W / 2 + rnd(-6, 6), Hh / 2 + rnd(-6, 6), r, 0, 7); c.stroke(); }
+    }) });
+    const topM = mesh(new THREE.CylinderGeometry(T.R, T.R * 0.97, 0.02, 64), [wood, wood, M.darkMetal]); topM.position.set(T.X, T.Y - 0.01, T.Z); g.add(topM);
+    const edge = mesh(new THREE.TorusGeometry(T.R, 0.006, 8, 64), new THREE.MeshStandardMaterial({ color: 0x6b3a1a, roughness: 0.5 })); edge.rotation.x = Math.PI / 2; edge.position.set(T.X, T.Y - 0.004, T.Z); g.add(edge);
+    const legM = mesh(new THREE.CylinderGeometry(0.03, 0.04, T.Y - PIT_Y - 0.02, 24), M.brushed); legM.position.set(T.X, (T.Y + PIT_Y) / 2 - 0.01, T.Z); g.add(legM);
+  }
+  // 回転テーブル: 運動学的に回る円盤（景品は摩擦で一緒に回る）
+  buildTurntable() {
+    const w = this.world, g = this.group, T = TURN;
+    const disc = this.ttBody = new CANNON.Body({ mass: 0, type: CANNON.Body.KINEMATIC, material: PM.stat, collisionFilterGroup: G_STATIC, collisionFilterMask: G_PRIZE });
+    disc.addShape(new CANNON.Cylinder(T.R, T.R, 0.03, 32)); disc.position.set(T.X, T.Y - 0.015, T.Z);
+    disc.angularVelocity.set(0, T.W, 0);
+    w.addBody(disc);
+    const tex = canvasTex(512, 512, (c, W, Hh) => {
+      for (let i = 0; i < 12; i++) { c.fillStyle = i % 2 ? '#ffd43b' : '#ff6b6b'; c.beginPath(); c.moveTo(W / 2, Hh / 2); c.arc(W / 2, Hh / 2, W / 2, i / 12 * Math.PI * 2, (i + 1) / 12 * Math.PI * 2); c.fill(); }
+      c.fillStyle = '#fff'; c.beginPath(); c.arc(W / 2, Hh / 2, 50, 0, 7); c.fill();
+    });
+    this.ttVis = new THREE.Group(); this.ttVis.position.set(T.X, T.Y - 0.015, T.Z); g.add(this.ttVis);
+    this.ttVis.add(mesh(new THREE.CylinderGeometry(T.R, T.R, 0.03, 64), [M.paintWhite, new THREE.MeshStandardMaterial({ map: tex, roughness: 0.6 }), M.paintWhite]));
+    const rim = mesh(new THREE.TorusGeometry(T.R, 0.006, 8, 64), M.chrome); rim.rotation.x = Math.PI / 2; rim.position.y = 0.015; this.ttVis.add(rim);
+  }
+  // 段差前落とし: 奥ほど高い3段の台。手前の段の先が取り出し口
+  buildSteps() {
+    const w = this.world, g = this.group;
+    const felt = M.felt.clone(); felt.color.set(0xf5d38a);
+    for (const st of STEPS) {
+      staticBox(w, -0.45, 0.45, PIT_Y, st.y, st.z0, st.z1);
+      boxMesh(-0.45, 0.45, PIT_Y, st.y, st.z0, st.z1, felt, g);
+      boxMesh(-0.45, 0.45, st.y - 0.008, st.y + 0.002, st.z1 - 0.012, st.z1, M.chrome, g, { cast: false });
+    }
+    const last = STEPS[STEPS.length - 1];
+    const hz = boxMesh(-0.45, 0.45, last.y + 0.0005, last.y + 0.002, last.z1 - 0.03, last.z1 - 0.012, M.hazard.clone(), g, { cast: false });
+    hz.material.map = M.hazard.map.clone(); hz.material.map.repeat.set(6, 1);
+  }
+  spawnChabudai() {
+    const kind = pick(['bear', 'mochi', 'cat']), S = kind === 'mochi' ? 1.9 : 1.7;
+    const b = plushBody(kind, S);
+    b.position.set(TABLE.X + rnd(-0.03, 0.03), TABLE.Y + 0.09 * S * (kind === 'cat' ? 0.5 : 0.7), TABLE.Z + rnd(-0.03, 0.03));
+    b.quaternion.setFromEuler(0, rnd(-0.8, 0.8), 0);
+    const gm = PLUSH_KINDS[kind](); gm.scale.setScalar(S);
+    this.addPrize(kind, gm, b);
+  }
+  spawnTurntable(n, fromAbove = false) {
+    const kinds = ['bear', 'mochi', 'cat', 'box'];
+    for (let i = 0; i < n; i++) {
+      const kind = kinds[i % kinds.length], sc = 0.85;
+      const a = (i / n) * Math.PI * 2 + rnd(-0.2, 0.2), r = rnd(0.08, 0.2);
+      const b = plushBody(kind, sc);
+      b.position.set(TURN.X + Math.cos(a) * r, (fromAbove ? 0.35 : TURN.Y + 0.06) + (kind === 'bear' ? BEAR_COM * sc : 0), TURN.Z + Math.sin(a) * r);
+      b.quaternion.setFromEuler(rnd(-0.3, 0.3), rnd(0, 6.28), rnd(-0.3, 0.3));
+      const gm = PLUSH_KINDS[kind](); gm.scale.setScalar(sc);
+      this.addPrize(kind, gm, b);
+    }
+  }
+  spawnSteps(n, fromAbove = false) {
+    const kinds = ['chocobox', 'cookietin', 'sticks', 'gummy', 'senbei', 'bigchips'];
+    const spots = [];
+    STEPS.forEach((st, si) => { for (const x of [-0.3, -0.1, 0.1, 0.3]) spots.push([x, si === 2 ? st.z0 + 0.06 : (st.z0 + st.z1) / 2, st.y]); });
+    const used = this.prizes.filter(p => !p.won).map(p => p.body.position);
+    const free = spots.filter(([x, z]) => used.every(u => Math.hypot(u.x - x, u.z - z) > 0.1)).sort(() => Math.random() - 0.5);
+    for (let i = 0; i < n && i < free.length; i++) {
+      const kind = pick(kinds), [x, z, y] = free[i];
+      const body = goodsBody(kind), h = GOODS[kind].size[1];
+      body.position.set(x + rnd(-0.02, 0.02), (fromAbove ? 0.45 : y + h / 2 + 0.002), z + rnd(-0.01, 0.01));
+      body.quaternion.setFromEuler(0, rnd(-0.3, 0.3), 0);
+      this.addPrize(kind, GOODS[kind].build(), body);
+    }
+  }
+  // ペラ輪: もちもちのぬいぐるみの頭に、穴のあいたタグ（ペラ）がプラスチックのループで付いている
+  spawnPera(n, fromAbove = false) {
+    const spots = [[-0.08, -0.22], [0.12, -0.22], [0.32, -0.2], [-0.05, 0.0], [0.15, 0.02], [0.33, 0.06], [0.0, 0.22], [0.2, 0.24]];
+    const used = this.prizes.filter(p => !p.won).map(p => p.body.position);
+    const free = spots.filter(([x, z]) => used.every(u => Math.hypot(u.x - x, u.z - z) > 0.13)).sort(() => Math.random() - 0.5);
+    const { RZ, RH, T, S } = PERA, top = 0.046 * S;
+    for (let i = 0; i < n && i < free.length; i++) {
+      const b = plushBody('mochi', S);
+      for (const sz of [-1, 1]) b.addShape(new CANNON.Box(v3(T, RH / 2, T)), v3(0, top + RH / 2, sz * RZ));
+      b.addShape(new CANNON.Box(v3(T, T, RZ + T)), v3(0, top + RH, 0));
+      b.updateMassProperties();
+      const [x, z] = free[i];
+      b.position.set(x + rnd(-0.01, 0.01), fromAbove ? 0.4 : 0.042 * S, z + rnd(-0.01, 0.01));
+      b.quaternion.setFromEuler(0, (Math.random() < 0.5 ? 0 : Math.PI) + rnd(-0.12, 0.12), 0);   // タグの面は左右を向く
+      const gm = mochiMesh(pick(['#ffd84a', '#9be3c8', '#ffffff', '#c7b3ff', '#ffb3c6'])); gm.scale.setScalar(S);
+      gm.add(peraTagMesh(top, S));
+      this.addPrize('pera', gm, b);
+    }
+  }
   spawnBalls(n) {
     for (let i = 0; i < n; i++) {
       const b = new CANNON.Body({ mass: 0.0027, material: PM.ball, collisionFilterGroup: G_PRIZE, collisionFilterMask: G_STATIC | G_CLAW | G_PRIZE, linearDamping: 0.15, angularDamping: 0.2 });
@@ -2629,6 +2790,25 @@ class ClawMachine extends Machine {
         this.clearPlate(); this.newRound();
         return true;
       }
+      case 'chabudai': if (left) return false; clear(); this.spawnChabudai(); break;
+      case 'turntable': if (left >= 6) return false; clear(); this.spawnTurntable(4, true); break;
+      case 'maeotoshi': if (left >= 7) return false; clear(); this.spawnSteps(4, true); break;
+      case 'pera': {
+        // 倒れてタグが上を向いていないぬいぐるみは、店員さんがその場で起こす
+        let fixed = false;
+        for (const p of this.prizes) {
+          if (p.won) continue;
+          const up = p.body.quaternion.vmult(v3(0, 1, 0));
+          if (up.y > 0.8) continue;
+          const q = p.body.position;
+          q.set(Math.min(0.38, Math.max(-0.15, q.x)), 0.042 * PERA.S + 0.002, Math.min(0.3, Math.max(-0.3, q.z)));
+          p.body.quaternion.setFromEuler(0, (Math.random() < 0.5 ? 0 : Math.PI) + rnd(-0.12, 0.12), 0);
+          p.body.velocity.setZero(); p.body.angularVelocity.setZero(); p.body.wakeUp();
+          fixed = true;
+        }
+        if (left >= 3) { if (fixed) this.awake = 4; return fixed ? '店員さんが景品を直しました' : false; }
+        clear(); this.spawnPera(3, true); break;
+      }
       case 'dring': {
         // 倒れてリングが上を向いていない箱は、店員さんがその場で起こす
         let fixed = false;
@@ -2671,6 +2851,9 @@ class ClawMachine extends Machine {
       case 'keychain': this.weak = rnd(0.2, 0.65); break;
       case 'takoyaki': this.weak = rnd(0.5, 1.0); break;
       case 'dring': this.weak = rnd(0.25, 0.85); break;
+      case 'pera': this.weak = rnd(0.25, 0.85); break;
+      case 'chabudai': this.weak = rnd(0.3, 0.65); break;
+      case 'maeotoshi': this.weak = rnd(0.3, 0.7); break;
       default: this.weak = Math.random() < 0.15 ? 1.0 : rnd(0.2, 0.7);
     }
   }
@@ -2698,6 +2881,9 @@ class ClawMachine extends Machine {
   }
   floorY() {
     if (this.P.takoyaki) return this.z > 0 ? TAKO.PY : 0;
+    if (this.P.chabudai) return Math.hypot(this.x - TABLE.X, this.z - TABLE.Z) < TABLE.R ? TABLE.Y : PIT_Y;
+    if (this.P.turntable) return Math.hypot(this.x - TURN.X, this.z - TURN.Z) < TURN.R ? TURN.Y : 0;
+    if (this.P.steps) { const st = STEPS.find(s => this.z >= s.z0 && this.z < s.z1); return st ? st.y : PIT_Y; }
     return this.P.base === 'ufo' || this.P.frontDrop ? 0 : PIT_Y;
   }
 
@@ -2953,6 +3139,7 @@ class ClawMachine extends Machine {
   }
   sync() {
     this.syncPrizes();
+    if (this.ttBody) this.ttVis.quaternion.copy(this.ttBody.quaternion);
     const pose = this.prev || this.clawPose();
     this.hubVis.position.copy(pose.hub);
     const L = Math.max(0.08, 0.93 - this.y);
@@ -3441,18 +3628,22 @@ class RingHookMachine extends Machine {
 // ============================================================
 // 手前の列（奥を向く）→ 奥の列（手前を向く）の順に並べる。横スワイプはこの順に切り替わる
 const ROW_B = { z: 3.05, rotY: Math.PI };
+new ClawMachine(-3.75, 'pera');
 new ClawMachine(-2.5, 'keychain');
 new ClawMachine(-1.25, 'ufo2');
 const clawMachine = new ClawMachine(0);
 const ringMachine = new RingHookMachine(1.25);
 const vegMachine = new RingHookMachine(2.5, { kind: 'veg' });
 new RingHookMachine(3.75, { kind: 'snack' });
+new ClawMachine(5.0, 'turntable');
+new ClawMachine(5.0, 'maeotoshi', ROW_B);
 new RingHookMachine(3.75, { kind: 'drink', ...ROW_B });
 new ClawMachine(2.5, 'dring', ROW_B);
 new ClawMachine(1.25, 'takoyaki', ROW_B);
 new ClawMachine(0, 'bridge', ROW_B);
 new ClawMachine(-1.25, 'taiwan', ROW_B);
 new ClawMachine(-2.5, 'bigplush', ROW_B);
+new ClawMachine(-3.75, 'chabudai', ROW_B);
 
 // 影を落とすスポットライトは1つだけ。遊んでいる台（歩いているときは一番近い台）の照明と入れ替える
 const shadowSpot = new THREE.SpotLight(0xfff3e6, 4.6, 2.6, 1.15, 0.8, 2);
@@ -3787,6 +3978,13 @@ function updateAim() {
   aimGlow.position.copy(hit.point).addScaledVector(n, 0.006).addScaledVector(toCam, 0.012);
   aimGlow.scale.setScalar(0.055 * (1 + 0.15 * Math.sin(elapsed * 8)));
   aimGhost.position.copy(aimGlow.position); aimGhost.scale.copy(aimGlow.scale);
+}
+// 照準用の見えない円（丸いテーブルなど）
+function aimDisc(group, x, y, z, r) {
+  const m = new THREE.Mesh(new THREE.CircleGeometry(r, 40), new THREE.MeshBasicMaterial({ visible: false }));
+  m.rotation.x = -Math.PI / 2; m.position.set(x, y, z);
+  group.add(m);
+  return m;
 }
 // 照準用の見えない面（床など）
 function aimPlane(group, x0, x1, y, z0, z1) {
