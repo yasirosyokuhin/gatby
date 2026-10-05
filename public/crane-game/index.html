@@ -3447,7 +3447,7 @@ class RingHookMachine extends Machine {
     this.awake = 4;
     return true;
   }
-  onDrop() { this.stall = 0; this.unlatch(); this.setState('drop', ''); }
+  onDrop() { this.stall = 0; this.slipDir = null; this.unlatch(); this.setState('drop', ''); }
   isWin(b) { return b.position.y < -0.12; }
   aimOrigin() { return new THREE.Vector3(this.x, this.y - 0.03, this.z); }
   aimTargets() { return [this.boardVis, this.trayVis, ...this.prizes.map(p => p.group), ...this.aimSurfaces]; }
@@ -3472,6 +3472,12 @@ class RingHookMachine extends Machine {
     };
   }
 
+  // 点（リング側の接触点）がフックの曲がりの内側にあるか。hookCurve の円（中心 y=0.034, z=0.018, 半径 0.018）の内側
+  inBight(wp) {
+    const l = this.board.pointToLocalFrame(wp), c = Math.cos(this.hookYaw), s = Math.sin(this.hookYaw);
+    const z = l.x * s + l.z * c, y = l.y - this.K.BOARD[1] / 2;
+    return Math.hypot(y - 0.034, z - 0.018) < 0.0175;
+  }
   unlatch() { if (this.latch) { this.world.removeConstraint(this.latch); this.latch = null; } }
   setHead(h) {
     const pv = this.headPrev || { x: this.x, y: this.y, z: this.z };
@@ -3550,7 +3556,25 @@ class RingHookMachine extends Machine {
     this.moveGantry(tvx, tvz, h);
     this.setHead(h);
     this.rope();
+    this.tipSlip();
     this.ringTwist();
+  }
+  // フックの先の玉の下にリングが当たって押し上げているだけなら、その位置は不安定なので玉からすべらせる。
+  // 先より奥（フックの根元側）に当たっていればフックの入口へ、手前なら外へ。ほぼ真下ならどちらかへ
+  tipSlip() {
+    if (this.latch || !['lift', 'top'].includes(this.state) || this.board.position.y < this.K.BOARD_Y + 0.003) return;
+    const c = Math.cos(this.hookYaw), s = Math.sin(this.hookYaw), TIP_Y = 0.034 - 0.018 * Math.SQRT1_2, TIP_Z = 0.018 + 0.018 * Math.SQRT1_2;
+    for (const ce of this.world.contacts) {
+      const a = ce.bi, b = ce.bj;
+      if (!((a === this.ring && b === this.board) || (a === this.board && b === this.ring))) continue;
+      const wp = a === this.ring ? a.position.vadd(ce.ri) : b.position.vadd(ce.rj);
+      const l = this.board.pointToLocalFrame(wp), z = l.x * s + l.z * c, y = l.y - this.K.BOARD[1] / 2;
+      if (y > TIP_Y - 0.001 || Math.hypot(y - TIP_Y, z - TIP_Z) > 0.012) continue;
+      if (this.slipDir == null) this.slipDir = Math.abs(z - TIP_Z) > 0.0015 ? Math.sign(z - TIP_Z) : (Math.random() < 0.5 ? -1 : 1);
+      const f = 1.5 * this.slipDir;
+      this.ring.applyForce(v3(s * f, 0, c * f), wp.vsub(this.ring.position));
+      return;
+    }
   }
   // ボールチェーンのねじれ剛性（弱い）: リングはどの台でも正面向きが自然な姿勢。
   // 揺れはガントリーの加減速・チェーン・接触だけから生まれる（人工的な力は加えない）
@@ -3565,13 +3589,15 @@ class RingHookMachine extends Machine {
     let f = 0;
     for (const eq of this.headJoint.equations) f += Math.abs(eq.multiplier);
     this.tension += (f - this.tension) * 0.2;
-    // リングがフックに掛かって板が持ち上がり始めたら、リングと板をつなぐ。
-    // 途中で外れて「掛かったのに取れない」ことがないよう、上まで必ず持ち上げる
+    // リングがフックの内側（曲がったところの奥）にしっかり入って板が持ち上がり始めたら、リングと板をつなぐ。
+    // 途中で外れて「掛かったのに取れない」ことがないよう、上まで必ず持ち上げる。
+    // フックの先に引っかかっているだけのときはつながない（先の玉からすべって外れる）
     if (!this.latch && this.state === 'lift' && this.board.position.y > this.K.BOARD_Y + 0.012) {
       for (const ce of this.world.contacts) {
         const a = ce.bi, b = ce.bj;
         if (!((a === this.ring && b === this.board) || (a === this.board && b === this.ring))) continue;
-        const wp = a.position.vadd(ce.ri);
+        const wp = a === this.ring ? a.position.vadd(ce.ri) : b.position.vadd(ce.rj);
+        if (!this.inBight(wp)) continue;
         const joint = new CANNON.PointToPointConstraint(this.ring, this.ring.pointToLocalFrame(wp), this.board, this.board.pointToLocalFrame(wp));
         this.world.addConstraint(joint);
         this.latch = joint; this.nudged = false;
