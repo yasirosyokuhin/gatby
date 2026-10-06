@@ -1002,14 +1002,14 @@ function boxPrizeMesh(hue, name) {
 }
 // ============================================================
 // 外部の3Dモデル（Kenney の Food Kit / Cube Pets。どちらも CC0 = 著作権放棄、商用利用・改変自由、表記不要）
-// assets/kenney/*.glb を起動時に読み込む。読めなかったモデルを使う景品は出さない
+// assets/kenney/*.glb を起動時に読み込む（1ファイルで配るときは window.KENNEY_INLINE の data: URL を使う）。読めなかったモデルを使う景品は出さない
 // ============================================================
 const KENNEY_PETS = ['animal-bunny', 'animal-cat', 'animal-dog', 'animal-panda', 'animal-penguin', 'animal-chick', 'animal-fox', 'animal-koala', 'animal-pig', 'animal-tiger', 'animal-polar', 'animal-elephant'];
 const KENNEY_FOOD = ['paprika', 'pineapple', 'mushroom', 'donut-sprinkles', 'donut-chocolate', 'donut', 'lollypop', 'soda-bottle', 'carton'];
 const KENNEY = {};
 async function loadKenney() {
   const loader = new GLTFLoader();
-  await Promise.all([...KENNEY_PETS, ...KENNEY_FOOD].map(n => loader.loadAsync(`assets/kenney/${n}.glb`).then(g => {
+  await Promise.all([...KENNEY_PETS, ...KENNEY_FOOD].map(n => loader.loadAsync(window.KENNEY_INLINE?.[n] ?? `assets/kenney/${n}.glb`).then(g => {
     g.scene.traverse(o => { if (o.isMesh) { o.material.metalness = 0; o.material.roughness = Math.max(0.45, o.material.roughness ?? 0.6); } });
     KENNEY[n] = g.scene;
   }).catch(() => {})));
