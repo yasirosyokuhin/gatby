@@ -266,6 +266,7 @@ import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 
 // キャンバスに描く文字のためにフォントを先に読み込む
 try {
@@ -999,6 +1000,34 @@ function boxPrizeMesh(hue, name) {
   g.add(mesh(new THREE.BoxGeometry(0.09, 0.12, 0.07), [side, side, side, side, face, face]));
   return g;
 }
+// ============================================================
+// 外部の3Dモデル（Kenney の Food Kit / Cube Pets。どちらも CC0 = 著作権放棄、商用利用・改変自由、表記不要）
+// assets/kenney/*.glb を起動時に読み込む。読めなかったモデルを使う景品は出さない
+// ============================================================
+const KENNEY_PETS = ['animal-bunny', 'animal-cat', 'animal-dog', 'animal-panda', 'animal-penguin', 'animal-chick', 'animal-fox', 'animal-koala', 'animal-pig', 'animal-tiger', 'animal-polar', 'animal-elephant'];
+const KENNEY_FOOD = ['paprika', 'pineapple', 'mushroom', 'donut-sprinkles', 'donut-chocolate', 'donut', 'lollypop', 'soda-bottle', 'carton'];
+const KENNEY = {};
+async function loadKenney() {
+  const loader = new GLTFLoader();
+  await Promise.all([...KENNEY_PETS, ...KENNEY_FOOD].map(n => loader.loadAsync(`assets/kenney/${n}.glb`).then(g => {
+    g.scene.traverse(o => { if (o.isMesh) { o.material.metalness = 0; o.material.roughness = Math.max(0.45, o.material.roughness ?? 0.6); } });
+    KENNEY[n] = g.scene;
+  }).catch(() => {})));
+}
+const hasKenney = (...names) => names.every(n => KENNEY[n]);
+// モデルを複製し、向き rot をつけてから w×h×d の箱に収まる大きさにして、中心を原点に置く
+function kfit(name, [w, h, d], rot = null) {
+  const g = new THREE.Group(), inner = new THREE.Group();
+  if (!KENNEY[name]) return g;
+  inner.add(KENNEY[name].clone(true));
+  if (rot) inner.rotation.set(...rot);
+  inner.updateMatrixWorld(true);
+  const box = new THREE.Box3().setFromObject(inner), sz = box.getSize(new THREE.Vector3()), c = box.getCenter(new THREE.Vector3());
+  const k = Math.min(w / sz.x, h / sz.y, d / sz.z);
+  inner.scale.setScalar(k); inner.position.copy(c).multiplyScalar(-k);
+  g.add(inner);
+  return g;
+}
 const BEAR_COM = 0.025;   // くまの重心（胴の中心から頭側へ）。中心のままだと寝た姿勢が安定せず勝手に起き上がる
 const PLUSH_KINDS = {
   // 重心を頭側へ 2.5cm ずらした物理形状に合わせて、見た目も下げておく
@@ -1006,10 +1035,12 @@ const PLUSH_KINDS = {
   mochi: () => mochiMesh(pick(['#ffd84a', '#9be3c8', '#ffffff', '#c7b3ff'])),
   cat: () => (Math.random() < 0.5 ? catMesh('#f0a050', '#c8742c') : catMesh('#a3a3aa', '#6d6d75')),
   box: () => boxPrizeMesh((Math.random() * 360) | 0, pick(['ねこ太郎', 'もちまる', 'くまきち'])),
+  // 四角いどうぶつフィギュア（Kenney Cube Pets）
+  pet: () => kfit(pick(KENNEY_PETS.filter(n => KENNEY[n])), [0.084, 0.084, 0.09]),
 };
 function plushBody(kind, s = 1) {
   const b = new CANNON.Body({
-    mass: 0.12, material: kind === 'box' ? PM.box : PM.plush,
+    mass: 0.12, material: kind === 'box' || kind === 'pet' ? PM.box : PM.plush,
     collisionFilterGroup: G_PRIZE, collisionFilterMask: G_STATIC | G_CLAW | G_PRIZE,
     linearDamping: 0.05, angularDamping: 0.45,
   });
@@ -1026,6 +1057,8 @@ function plushBody(kind, s = 1) {
   } else if (kind === 'cat') {
     for (const x of [-0.06, -0.02, 0.02, 0.06]) b.addShape(new CANNON.Sphere(0.036 * s), v3(x * s, 0, 0));
     b.mass = 0.14;
+  } else if (kind === 'pet') {
+    b.addShape(new CANNON.Box(v3(0.042 * s, 0.042 * s, 0.045 * s))); b.mass = 0.11;
   } else {
     b.addShape(new CANNON.Box(v3(0.045 * s, 0.06 * s, 0.035 * s))); b.mass = 0.17;
   }
@@ -1402,6 +1435,53 @@ Object.assign(GOODS, {
   sticks: { size: [0.16, 0.025, 0.06], mass: 0.08,
     build() { return packMesh('sticks', 0.16, 0.025, 0.06, { bg: '#d6312b', title: 'チョコスティック', fg: '#fff' }); } },
   // ---- 飲み物 ----
+  // ---- Kenney Food Kit のモデルを使った景品 ----
+  paprika: { size: [0.15, 0.08, 0.10], mass: 0.3, needs: ['paprika'],
+    build() {
+      const g = new THREE.Group();
+      g.add(at(mesh(new THREE.BoxGeometry(0.15, 0.012, 0.10), trayMat), 0, -0.034, 0));
+      [-0.046, 0, 0.046].forEach((x, i) => { const m = kfit('paprika', [0.044, 0.066, 0.05], [0, i * 1.9, 0]); m.position.set(x, -0.002, 0); g.add(m); });
+      g.add(mesh(new THREE.BoxGeometry(0.152, 0.08, 0.102), wrapFilm, { cast: false }));
+      return g;
+    } },
+  pineapple: { size: [0.10, 0.21, 0.10], mass: 0.85, angularDamping: 0.6, needs: ['pineapple'],
+    shapes(b) { b.addShape(new CANNON.Cylinder(0.046, 0.046, 0.21, 12)); },
+    build() { return kfit('pineapple', [0.1, 0.21, 0.1]); } },
+  mushroom: { size: [0.15, 0.06, 0.10], mass: 0.18, needs: ['mushroom'],
+    build() {
+      const g = new THREE.Group();
+      g.add(at(mesh(new THREE.BoxGeometry(0.15, 0.012, 0.10), trayMat), 0, -0.024, 0));
+      for (const [x, z, r] of [[-0.04, -0.022, 0.3], [0.035, -0.02, 1.4], [-0.035, 0.024, 2.5], [0.04, 0.022, 4.1]]) { const m = kfit('mushroom', [0.05, 0.045, 0.05], [0, r, 0]); m.position.set(x, 0.002, z); g.add(m); }
+      g.add(mesh(new THREE.BoxGeometry(0.152, 0.06, 0.102), wrapFilm, { cast: false }));
+      return g;
+    } },
+  donutbox: { size: [0.17, 0.05, 0.12], mass: 0.22, needs: ['donut-sprinkles', 'donut-chocolate', 'donut'],
+    build() {
+      const g = new THREE.Group();
+      const boxM = new THREE.MeshStandardMaterial({ map: pkgTex('donutbox', 512, 64, (c, W, Hh) => { c.fillStyle = '#ffb3d1'; c.fillRect(0, 0, W, Hh); wrapText(c, 'ドーナツ 4こ入り', W / 2, 44, 34, '#fff'); }), roughness: 0.6 });
+      const white = new THREE.MeshStandardMaterial({ color: 0xfff5fa, roughness: 0.7 });
+      g.add(mesh(new THREE.BoxGeometry(0.17, 0.05, 0.12), [boxM, boxM, wrapFilm, white, boxM, boxM], { cast: true }));
+      ['donut-sprinkles', 'donut-chocolate', 'donut', 'donut-sprinkles'].forEach((n, i) => { const m = kfit(n, [0.07, 0.03, 0.05]); m.position.set(i % 2 ? 0.04 : -0.04, -0.006, i < 2 ? -0.028 : 0.028); g.add(m); });
+      return g;
+    } },
+  lollipops: { size: [0.16, 0.035, 0.10], mass: 0.1, needs: ['lollypop'],
+    build() {
+      const g = new THREE.Group();
+      for (let i = 0; i < 5; i++) { const m = kfit('lollypop', [0.13, 0.03, 0.05], [0, 0, Math.PI / 2]); m.rotation.y = (i - 2) * 0.12; m.position.set(-0.012, -0.004 + (i % 2) * 0.006, (i - 2) * 0.017); g.add(m); }
+      const tag = new THREE.MeshStandardMaterial({ map: pkgTex('lolly', 256, 64, (c, W, Hh) => { c.fillStyle = '#7048e8'; c.fillRect(0, 0, W, Hh); wrapText(c, 'キャンディ5本', W / 2, 42, 28, '#fff'); }), roughness: 0.5 });
+      g.add(at(mesh(new THREE.BoxGeometry(0.03, 0.034, 0.1), [tag, tag, tag, tag, tag, tag]), 0.065, 0, 0));
+      g.add(mesh(new THREE.BoxGeometry(0.162, 0.036, 0.102), wrapFilm, { cast: false }));
+      return g;
+    } },
+  soda2: { size: [0.12, 0.17, 0.06], mass: 0.9, needs: ['soda-bottle'],
+    build() {
+      const g = new THREE.Group();
+      for (const x of [-0.03, 0.03]) { const m = kfit('soda-bottle', [0.058, 0.17, 0.058]); m.position.x = x; g.add(m); }
+      g.add(at(mesh(new THREE.BoxGeometry(0.122, 0.05, 0.062), wrapFilm, { cast: false }), 0, -0.04, 0));
+      return g;
+    } },
+  milk: { size: [0.075, 0.17, 0.075], mass: 0.6, needs: ['carton'],
+    build() { return kfit('carton', [0.075, 0.17, 0.075]); } },
   pet2l: { size: [0.09, 0.19, 0.09], mass: 0.65, shapes(b) { b.addShape(new CANNON.Cylinder(0.045, 0.045, 0.19, 16)); },
     build() { return bottleMesh('pet2l', 0.045, 0.19, { body: 0xd8f0ff, cap: 0x1d6fd1, label: '#1d6fd1', title: 'おいしい水 2L', clear: true }); } },
   cans6: { size: [0.15, 0.065, 0.10], mass: 0.5,
@@ -2399,7 +2479,7 @@ class ClawMachine extends Machine {
   }
   spawn(count, dropFromAbove = false) {
     const sc = this.P.scale ?? 1;
-    const kinds = ['bear', 'bear', 'bear', 'bear', 'bear', 'bear', 'mochi', 'mochi', 'mochi', 'mochi', 'mochi', 'cat', 'cat', 'cat', 'box', 'box', 'box'];
+    const kinds = ['bear', 'mochi', 'pet', 'bear', 'mochi', 'cat', 'bear', 'box', 'mochi', 'pet', 'bear', 'cat', 'mochi', 'bear', 'box', 'cat', 'pet', 'mochi', 'bear'].filter(k => k !== 'pet' || hasKenney(...KENNEY_PETS.slice(0, 1)));
     const plan = [];
     for (let i = 0; i < count; i++) plan.push(kinds[i % kinds.length]);
     plan.sort(() => Math.random() - 0.5);
@@ -2637,7 +2717,7 @@ class ClawMachine extends Machine {
     this.addPrize(kind, gm, b);
   }
   spawnTurntable(n, fromAbove = false) {
-    const kinds = ['bear', 'mochi', 'cat', 'box'];
+    const kinds = ['bear', 'mochi', 'cat', 'box', 'pet'].filter(k => k !== 'pet' || hasKenney(...KENNEY_PETS.slice(0, 1)));
     for (let i = 0; i < n; i++) {
       const kind = kinds[i % kinds.length], sc = 0.85;
       const a = (i / n) * Math.PI * 2 + rnd(-0.2, 0.2), r = rnd(0.08, 0.2);
@@ -2649,7 +2729,7 @@ class ClawMachine extends Machine {
     }
   }
   spawnSteps(n, fromAbove = false) {
-    const kinds = ['chocobox', 'cookietin', 'sticks', 'gummy', 'senbei', 'bigchips'];
+    const kinds = ['chocobox', 'cookietin', 'sticks', 'gummy', 'senbei', 'bigchips', 'donutbox'].filter(k => !GOODS[k].needs || hasKenney(...GOODS[k].needs));
     const spots = [];
     STEPS.forEach((st, si) => { for (const x of [-0.3, -0.1, 0.1, 0.3]) spots.push([x, si === 2 ? st.z0 + 0.06 : (st.z0 + st.z1) / 2, st.y]); });
     const used = this.prizes.filter(p => !p.won).map(p => p.body.position);
@@ -3219,19 +3299,19 @@ const RING_PRESETS = {
     name: '野菜リングフック', short: '野菜フック', hookYaw: -Math.PI / 2,
     shell: { body: 0x3f9b3a, signSide: 0x1f5e1f, glow: 0x9cff6a, hue: 0.3, sign: ['VEGE HOOK', '★ 野菜リングフック ★', '#3fae3a', '#f2a51a', '#e2532b'], panel: ['#1d4a1a', '#2f6b25'] },
     backdrop: () => vegBackdrop, panelText: '左向きフック！リングを横にゆらしてかけよう',
-    goods: ['melon', 'cabbage', 'onion', 'carrot', 'potato', 'tomato', 'corn', 'eggplant', 'broccoli', 'pumpkin'],
+    goods: ['melon', 'cabbage', 'onion', 'carrot', 'potato', 'tomato', 'corn', 'eggplant', 'broccoli', 'pumpkin', 'paprika', 'pineapple', 'mushroom'],
   },
   snack: {
     name: 'お菓子リングフック', short: 'お菓子フック', hookYaw: 0, ringR: 0.036,
     shell: { body: 0xff7eb6, signSide: 0xc2185b, glow: 0xffb3d9, hue: 0.9, sign: ['SWEETS HOOK', '★ お菓子リングフック ★', '#ff5fa2', '#ffc93c', '#ff7a3d'], panel: ['#5a1636', '#7a1d4a'] },
     backdrop: () => snackBackdrop, panelText: 'リングが小さい！ フックの先を正確にねらおう',
-    goods: ['bigchips', 'chocobox', 'cookietin', 'gummy', 'senbei', 'sticks'],
+    goods: ['bigchips', 'chocobox', 'cookietin', 'gummy', 'senbei', 'sticks', 'donutbox', 'lollipops'],
   },
   drink: {
     name: 'ドリンクリングフック', short: 'ドリンクフック', hookYaw: Math.PI / 6,
     shell: { body: 0x2f7bd8, signSide: 0x1a4a8a, glow: 0x8fd3ff, hue: 0.58, sign: ['DRINK HOOK', '★ ドリンクリングフック ★', '#2f9bff', '#3ee6ff', '#1b4fd1'], panel: ['#0e2550', '#1b3a7a'] },
     backdrop: () => drinkBackdrop, panelText: 'フックが斜め右前を向いている！ 向きを読んでかけよう',
-    goods: ['pet2l', 'cans6', 'juice', 'teabottle'],
+    goods: ['pet2l', 'cans6', 'juice', 'teabottle', 'soda2', 'milk'],
   },
 };
 
@@ -3259,7 +3339,7 @@ class RingHookMachine extends Machine {
     this.ringYaw = P.ringYaw ?? 0;
     // 真横カメラは②で奥へ動かす間だけ。リングが下り始めたら、フックとリングに寄った斜め上からの視点にする
     this.sideStates = ['move2'];
-    this.goodsKinds = P.goods;
+    this.goodsKinds = P.goods.filter(k => !GOODS[k].needs || hasKenney(...GOODS[k].needs));
     this.K = {
       HEAD_TOP: 0.78, HEAD_DOWN: 0.535, DESC: 0.22, RISE: 0.16,
       LINKS: 6, LINK: 0.034, RING_R: P.ringR ?? 0.05, RING_T: 0.0045,
@@ -3685,6 +3765,7 @@ class RingHookMachine extends Machine {
 // ============================================================
 // 手前の列（奥を向く）→ 奥の列（手前を向く）の順に並べる。横スワイプはこの順に切り替わる
 const ROW_B = { z: 3.05, rotY: Math.PI };
+await loadKenney();
 new ClawMachine(-3.75, 'pera');
 new ClawMachine(-2.5, 'keychain');
 new ClawMachine(-1.25, 'ufo2');
