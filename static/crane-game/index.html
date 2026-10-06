@@ -3184,14 +3184,24 @@ class ClawMachine extends Machine {
 // ============================================================
 // 「?」形フックの中心線（板の上面からの局所座標）。
 // 巻きは手前（+z）に向かって伸びる。正面を向いたリングが前後に揺れると、この腕がリングの穴を通る。
+// 板のフックの形（「?」形）: 立ち上がり RISE、上の円（中心の高さ CY・前後 CZ、半径 R）、先は真下から TIP_A だけ奥へ巻いて終わる。
+// フック全体を根元から LEAN だけ奥へ傾けてある: 上に乗ったリングは手前へすべり落ち、巻き上げで先の下から内側へ滑り込む。
+// DAMP: ボールチェーンの揺れの減衰、FR: リングと板の摩擦、ADAMP: リングの回転の減衰。
+// テスト用に URL の #{"hook":{...}} で上書きできる
+const HOOK = { RISE: 0.03, CY: 0.034, CZ: 0.018, R: 0.018, TIP_A: Math.PI / 4, LEAN: 0.35, DOWN: 0, DAMP: 0.6, PAUSE: 0, FR: 0.15, ADAMP: 0.3 };
+try { Object.assign(HOOK, JSON.parse(decodeURIComponent(location.hash.slice(1)) || '{}').hook || {}); } catch (e) {}
+HOOK.TIP_Y = HOOK.CY - HOOK.R * Math.sin(HOOK.TIP_A); HOOK.TIP_Z = HOOK.CZ + HOOK.R * Math.cos(HOOK.TIP_A);
 function hookCurve(yaw = 0) {
-  const pts = [];
-  for (let i = 0; i <= 6; i++) pts.push(new THREE.Vector3(0, i * 0.005, 0));            // 立ち上がり
-  const cz = 0.018, cy = 0.034, r = 0.018;
-  for (let i = 1; i <= 16; i++) {                                                     // 上を回って下向きに巻く
-    const a = Math.PI - (i / 16) * (Math.PI + Math.PI / 4);
+  const pts = [], { RISE, CY: cy, CZ: cz, R: r, TIP_A } = HOOK, nr = Math.round(RISE / 0.005);
+  for (let i = 0; i <= nr; i++) pts.push(new THREE.Vector3(0, i * RISE / nr, cz - r));   // 立ち上がり
+  const n = Math.round(16 * r / 0.018);
+  for (let i = 1; i <= n; i++) {                                                     // 上を回って下向きに巻く
+    const a = Math.PI - (i / n) * (Math.PI + TIP_A);
     pts.push(new THREE.Vector3(0, cy + r * Math.sin(a), cz + r * Math.cos(a)));
   }
+  // 根元から少し奥へ傾ける（LEAN）
+  const cb = Math.cos(HOOK.LEAN), sb = Math.sin(HOOK.LEAN);
+  for (const p of pts) { const y = p.y, z = p.z; p.y = y * cb + z * sb; p.z = z * cb - y * sb; }
   // yaw だけ鉛直軸まわりに回す（0: 腕が手前向き、-π/2: 左向き）
   const q = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), yaw);
   return pts.map(p => p.applyQuaternion(q));
@@ -3218,7 +3228,7 @@ const RING_PRESETS = {
     goods: ['bigchips', 'chocobox', 'cookietin', 'gummy', 'senbei', 'sticks'],
   },
   drink: {
-    name: 'ドリンクリングフック', short: 'ドリンクフック', hookYaw: Math.PI / 4,
+    name: 'ドリンクリングフック', short: 'ドリンクフック', hookYaw: Math.PI / 6,
     shell: { body: 0x2f7bd8, signSide: 0x1a4a8a, glow: 0x8fd3ff, hue: 0.58, sign: ['DRINK HOOK', '★ ドリンクリングフック ★', '#2f9bff', '#3ee6ff', '#1b4fd1'], panel: ['#0e2550', '#1b3a7a'] },
     backdrop: () => drinkBackdrop, panelText: 'フックが斜め右前を向いている！ 向きを読んでかけよう',
     goods: ['pet2l', 'cans6', 'juice', 'teabottle'],
@@ -3259,7 +3269,8 @@ class RingHookMachine extends Machine {
       ROPE_K: 900, ROPE_C: 8,  // 板とトレーをつなぐチェーン（引っ張るときだけ効くばね）
     };
     // 小さいリングは同じチェーンでも輪の下端が高くなるので、そのぶん深く下ろす（輪の下端の高さをそろえる）
-    this.K.HEAD_DOWN -= 2 * (0.05 - this.K.RING_R);
+    this.K.HEAD_DOWN -= 2 * (0.05 - this.K.RING_R) + HOOK.DOWN;
+    this.world.getContactMaterial(PM.ring, PM.plate).friction = HOOK.FR;
     this.y = this.K.HEAD_TOP;
     this.tension = 0; this.stall = 0; this.hooked = false;
     this.buildPhysics();
@@ -3399,7 +3410,7 @@ class RingHookMachine extends Machine {
     this.links = [];
     let y = this.y - 0.03 - K.LINK / 2;
     for (let i = 0; i < K.LINKS; i++) {
-      const b = new CANNON.Body({ mass: 0.012, material: PM.ring, collisionFilterGroup: G_CLAW, collisionFilterMask: G_STATIC | G_PRIZE, linearDamping: 0.08 });
+      const b = new CANNON.Body({ mass: 0.012, material: PM.ring, collisionFilterGroup: G_CLAW, collisionFilterMask: G_STATIC | G_PRIZE, linearDamping: HOOK.DAMP });
       b.addShape(new CANNON.Sphere(0.005));
       b.fixedRotation = true; b.updateMassProperties();
       b.position.set(this.x, y, this.z);
@@ -3412,7 +3423,7 @@ class RingHookMachine extends Machine {
     this.headJoint = this.world.constraints[this.world.constraints.length - K.LINKS];
     // 金属リング
     const R = K.RING_R, n = 14;
-    this.ring = new CANNON.Body({ mass: 0.035, material: PM.ring, collisionFilterGroup: G_CLAW, collisionFilterMask: G_STATIC | G_PRIZE, linearDamping: 0.06, angularDamping: 0.3 });
+    this.ring = new CANNON.Body({ mass: 0.035, material: PM.ring, collisionFilterGroup: G_CLAW, collisionFilterMask: G_STATIC | G_PRIZE, linearDamping: 0.5, angularDamping: HOOK.ADAMP });
     const segHalf = R * Math.sin(Math.PI / n) + 0.0012;
     for (let i = 0; i < n; i++) {
       const a = (i / n) * Math.PI * 2;
@@ -3472,11 +3483,16 @@ class RingHookMachine extends Machine {
     };
   }
 
-  // 点（リング側の接触点）がフックの曲がりの内側にあるか。hookCurve の円（中心 y=0.034, z=0.018, 半径 0.018）の内側
-  inBight(wp) {
+  // 点（リング側の接触点）がフックの曲がりの内側にあるか。hookCurve の円の内側
+  // 点を、フックを形づくったときの座標（傾きと向きを戻した y・z）に直す
+  hookYZ(wp) {
     const l = this.board.pointToLocalFrame(wp), c = Math.cos(this.hookYaw), s = Math.sin(this.hookYaw);
-    const z = l.x * s + l.z * c, y = l.y - this.K.BOARD[1] / 2;
-    return Math.hypot(y - 0.034, z - 0.018) < 0.0175;
+    const zl = l.x * s + l.z * c, yl = l.y - this.K.BOARD[1] / 2, cb = Math.cos(HOOK.LEAN), sb = Math.sin(HOOK.LEAN);
+    return { y: yl * cb - zl * sb, z: zl * cb + yl * sb };
+  }
+  inBight(wp) {
+    const { y, z } = this.hookYZ(wp);
+    return Math.hypot(y - HOOK.CY, z - HOOK.CZ) < HOOK.R - 0.0005;
   }
   unlatch() { if (this.latch) { this.world.removeConstraint(this.latch); this.latch = null; } }
   setHead(h) {
@@ -3507,7 +3523,8 @@ class RingHookMachine extends Machine {
     switch (this.state) {
       case 'drop':
         // 決まった量だけ下りる（実機の「下降量」設定）
-        this.y = Math.max(K.HEAD_DOWN, this.y - K.DESC * Math.min(1, this.t * 4) * h);
+        if (this.t < HOOK.PAUSE) break;
+        this.y = Math.max(K.HEAD_DOWN, this.y - K.DESC * Math.min(1, (this.t - HOOK.PAUSE) * 4) * h);
         if (this.y <= K.HEAD_DOWN) { this.S.clank(); this.setState('wait'); }
         break;
       case 'wait':
@@ -3563,12 +3580,12 @@ class RingHookMachine extends Machine {
   // 先より奥（フックの根元側）に当たっていればフックの入口へ、手前なら外へ。ほぼ真下ならどちらかへ
   tipSlip() {
     if (this.latch || !['lift', 'top'].includes(this.state) || this.board.position.y < this.K.BOARD_Y + 0.003) return;
-    const c = Math.cos(this.hookYaw), s = Math.sin(this.hookYaw), TIP_Y = 0.034 - 0.018 * Math.SQRT1_2, TIP_Z = 0.018 + 0.018 * Math.SQRT1_2;
+    const c = Math.cos(this.hookYaw), s = Math.sin(this.hookYaw), { TIP_Y, TIP_Z } = HOOK;
     for (const ce of this.world.contacts) {
       const a = ce.bi, b = ce.bj;
       if (!((a === this.ring && b === this.board) || (a === this.board && b === this.ring))) continue;
       const wp = a === this.ring ? a.position.vadd(ce.ri) : b.position.vadd(ce.rj);
-      const l = this.board.pointToLocalFrame(wp), z = l.x * s + l.z * c, y = l.y - this.K.BOARD[1] / 2;
+      const { y, z } = this.hookYZ(wp);
       if (y > TIP_Y - 0.001 || Math.hypot(y - TIP_Y, z - TIP_Z) > 0.012) continue;
       if (this.slipDir == null) this.slipDir = Math.abs(z - TIP_Z) > 0.0015 ? Math.sign(z - TIP_Z) : (Math.random() < 0.5 ? -1 : 1);
       const f = 1.5 * this.slipDir;
