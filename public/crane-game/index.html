@@ -806,7 +806,7 @@ const noSfx = new Proxy({}, { get: () => () => {} });
 // ============================================================
 // 店内
 // ============================================================
-const ROOM = { x0: -4.5, x1: 7.1, z0: -1.1, z1: 4.0 };
+const ROOM = { x0: -4.5, x1: 8.35, z0: -1.1, z1: 4.0 };
 const obstacles = [];   // 歩行時の当たり判定（XZ平面の矩形）
 function addObstacle(x0, x1, z0, z1) { obstacles.push({ x0, x1, z0, z1 }); }
 {
@@ -827,7 +827,7 @@ function addObstacle(x0, x1, z0, z1) { obstacles.push({ x0, x1, z0, z1 }); }
   ceil.rotation.x = Math.PI / 2; ceil.position.set(cx, ROOM_FLOOR + wallH, cz);
   scene.add(ceil);
   const panelMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(0xfff2e0).multiplyScalar(4) });
-  for (const x of [-3.8, -2.2, -0.6, 1.0, 2.6, 4.0, 5.4, 6.6]) for (const z of [0.9, 2.5]) {
+  for (const x of [-3.8, -2.2, -0.6, 1.0, 2.6, 4.0, 5.4, 6.6, 7.8]) for (const z of [0.9, 2.5]) {
     const p = new THREE.Mesh(new THREE.PlaneGeometry(0.9, 0.25), panelMat);
     p.rotation.x = Math.PI / 2; p.position.set(x, ROOM_FLOOR + wallH - 0.01, z);
     scene.add(p);
@@ -1550,8 +1550,9 @@ function refreshUI() {
   ui.machine.textContent = active ? active.short : '—';
   ui.credit.textContent = active ? active.credits : '—';
   const s = active?.state;
-  ui.b1.classList.toggle('off', !(s === 'ready1' || s === 'move1' || (s === 'idle' && active.credits > 0)));
-  ui.b2.classList.toggle('off', !(s === 'ready2' || s === 'move2'));
+  const on = active?.buttonsOn?.();
+  ui.b1.classList.toggle('off', on ? !on[0] : !(s === 'ready1' || s === 'move1' || (s === 'idle' && active.credits > 0)));
+  ui.b2.classList.toggle('off', on ? !on[1] : !(s === 'ready2' || s === 'move2'));
   for (const m of machines) m.drawDisplay();
 }
 
@@ -4194,6 +4195,212 @@ class KeyMachine extends Machine {
 }
 
 // ============================================================
+// タワー積み（スタッカー型）
+// ============================================================
+// 光るブロックの列が左右に往復する。① で止めると、下の段からはみ出した分は削れて落ちる。
+// 8段目まで積むと小景品（そこでやめるか、続けて大景品を狙うかを選ぶ）、12段目まで積むと大景品。
+// 段が上がるほど速くなり、幅は 3 → 2（5段目から）→ 1（10段目から）に強制的に細くなる
+const TOWER = { COLS: 7, ROWS: 12, MINOR: 8, X0: -0.36, Y0: -0.04, CW: 0.08, CH: 0.075, Z: -0.16, CHOICE_T: 10 };
+const towerMaxW = r => (r < 4 ? 3 : r < 9 ? 2 : 1);
+const towerStep = r => 0.17 - r * 0.0075;   // 1マス動く間隔 [秒]
+class TowerMachine extends Machine {
+  constructor(x, opt = {}) {
+    super({
+      name: 'タワー積み', short: 'タワー積み', x, z: opt.z ?? 0, rotY: opt.rotY ?? 0,
+      home: { x: 0, z: 0 }, range: { xMax: 0, zMin: 0 }, speed: 0,
+      views: { front: [[0, 0.42, 1.75], [0, 0.36, 0]], side: [[0.6, 0.45, 0.9], [0, 0.36, 0]], top: [[0, 1.2, 0.9], [0, 0.36, 0]] },
+      shell: {
+        base: 'pit', body: 0x0b0b14, trim: 0xff3d8b, signSide: 0x07070d, interactive: true, lights: true, glow: 0xff66cc, hue: 0.85,
+        signTex: signTexture('TOWER STACK', '★ タワー積み ★', '#ff3d8b', '#ffd43b', '#4dabf7'),
+        backdrop: makePegBackdrop('タワー積み', '12段で大景品！', '#0b0b14', '#ff3d8b'),
+        panel: ['#07070d', '#1a1a2e'], panelText: '①：ブロックを止める　8段で小景品・12段で大景品',
+      },
+    });
+    this.sideStates = [];
+    this.restockNotice = true;
+    this.spotScale = 0.5; this.spot.intensity *= this.spotScale;
+    this.lit = [];          // 止めた段ごとの、光っている列の集合
+    this.row = 0; this.pos = 0; this.dir = 1; this.w = 3; this.stepT = 0; this.pending = null;
+    this.chips = [];
+    this.build();
+    // 小景品の棚は奥、大景品の棚は手前（大景品が落ちるとき下の棚に当たらない）
+    this.shelves = { minor: { y: 0.42, z0: -0.15, z1: 0.0, prize: null, floor: null }, major: { y: 0.72, z0: 0.05, z1: 0.22, prize: null, floor: null } };
+    this.restock(true);
+    this.settle(1);
+    this.showIdle();
+    this.hint(this.idleHint());
+  }
+  build() {
+    const w = this.world, g = this.group, T = TOWER;
+    staticBox(w, -0.48, 0.48, PIT_Y - 0.05, PIT_Y, -0.44, 0.44);
+    for (const [x0, x1, z0, z1] of [[-0.48, 0.48, 0.40, 0.44], [-0.48, 0.48, -0.44, -0.40], [0.45, 0.49, -0.44, 0.44], [-0.49, -0.45, -0.44, 0.44]]) staticBox(w, x0, x1, PIT_Y, 1.05, z0, z1);
+    // ブロックの盤（黒い枠と、7×12 のマス）
+    const W = T.COLS * T.CW, Hh = T.ROWS * T.CH;
+    boxMesh(T.X0 - 0.02, T.X0 + W + 0.02, T.Y0 - 0.02, T.Y0 + Hh + 0.02, T.Z - 0.03, T.Z - 0.01, new THREE.MeshStandardMaterial({ color: 0x050508, roughness: 0.4 }), g);
+    this.offMat = new THREE.MeshStandardMaterial({ color: 0x15151f, roughness: 0.35, emissive: 0x0a0a12 });
+    this.rowMats = [...Array(T.ROWS)].map((_, r) => {
+      const c = new THREE.Color().setHSL((0.98 - r * 0.075 + 1) % 1, 0.95, 0.5);
+      return new THREE.MeshStandardMaterial({ color: c, emissive: c, emissiveIntensity: 0.9, roughness: 0.3 });
+    });
+    const geo = new RoundedBoxGeometry(T.CW - 0.008, T.CH - 0.008, 0.016, 2, 0.006);
+    this.cells = [...Array(T.ROWS)].map((_, r) => [...Array(T.COLS)].map((_, c) => {
+      const m = mesh(geo, this.offMat, { cast: false });
+      m.position.set(T.X0 + (c + 0.5) * T.CW, T.Y0 + (r + 0.5) * T.CH, T.Z);
+      g.add(m); return m;
+    }));
+    // 小景品・大景品の段の目印（光る線と札）
+    const mark = (r, text, color) => {
+      const y = T.Y0 + r * T.CH;
+      boxMesh(T.X0 - 0.02, T.X0 + W + 0.06, y - 0.003, y + 0.003, T.Z - 0.005, T.Z + 0.012, new THREE.MeshBasicMaterial({ color: new THREE.Color(color).multiplyScalar(2.5) }), g, { cast: false });
+      const tag = new THREE.Mesh(new THREE.PlaneGeometry(0.16, 0.045), new THREE.MeshBasicMaterial({ map: canvasTex(512, 144, (c2, w2, h2) => { c2.fillStyle = color; c2.fillRect(0, 0, w2, h2); c2.fillStyle = '#111'; c2.font = `900 92px ${FONT}`; c2.textAlign = 'center'; c2.fillText(text, w2 / 2, 108); }) }));
+      tag.position.set(0.34, y + 0.03, T.Z + 0.13); g.add(tag);
+    };
+    mark(T.MINOR, '小景品', '#ffd43b');
+    mark(T.ROWS, '大景品', '#ff3d8b');
+    // 景品の棚（盤の右）
+    for (const [y, z0, z1] of [[0.42, -0.15, 0.0], [0.72, 0.05, 0.22]]) boxMesh(0.25, 0.43, y - 0.015, y, z0, z1, paint(0x2b2b3d), g, { round: 0.004 });
+    this.aimSurfaces = [];
+  }
+  // 棚に景品を置く。取ると棚の床が消えて、景品が下へ落ちる
+  fillShelf(kind) {
+    const sh = this.shelves[kind];
+    let body, gm;
+    if (kind === 'major') {
+      const d = pick(KEY_PRIZES), [w, h, dd] = d.size;
+      body = new CANNON.Body({ mass: 0.4, material: PM.box, collisionFilterGroup: G_PRIZE, collisionFilterMask: G_STATIC | G_PRIZE });
+      body.addShape(new CANNON.Box(v3(w / 2, h / 2, dd / 2)));
+      body.position.set(0.34, sh.y + h / 2 + 0.002, (sh.z0 + sh.z1) / 2);
+      gm = packMesh('key-' + d.title, w, h, dd, { bg: d.bg, title: d.title.replace('\n', ''), sub: d.sub, fg: d.fg, band: d.band ?? null });
+    } else {
+      const k = hasKenney(KENNEY_PETS[0]) ? 'pet' : 'mochi';
+      body = plushBody(k, 0.9);
+      body.position.set(0.34, sh.y + 0.05, (sh.z0 + sh.z1) / 2);
+      gm = PLUSH_KINDS[k](); gm.scale.setScalar(0.9);
+    }
+    sh.prize = this.addPrize(kind, gm, body);
+    sh.floor = staticBox(this.world, 0.25, 0.43, sh.y - 0.015, sh.y, sh.z0, sh.z1);
+  }
+  restock(initial = false) {
+    let did = false;
+    for (const kind of ['minor', 'major']) {
+      const sh = this.shelves[kind];
+      if (sh.prize && !sh.prize.won && sh.floor) continue;
+      if (sh.prize && this.prizes.includes(sh.prize)) this.removePrize(sh.prize);
+      if (sh.floor) this.world.removeBody(sh.floor);
+      this.fillShelf(kind); did = true;
+    }
+    this.awake = 4;
+    return did && !initial;
+  }
+  release(kind) {
+    const sh = this.shelves[kind];
+    if (sh.floor) { this.world.removeBody(sh.floor); sh.floor = null; }
+    sh.prize.body.wakeUp(); sh.prize.body.velocity.set(0, 0, 0.15);
+    this.awake = 4;
+  }
+  press(n, down) {
+    const was = this.state;
+    super.press(n, down);
+    if (down && was !== 'idle') this.pending = n;
+  }
+  buttonsOn() { return this.state === 'choice' ? [true, true] : [this.state === 'ready1' || (this.state === 'idle' && this.credits > 0), false]; }
+  beginPlay() {
+    super.beginPlay();
+    this.lit = []; this.row = 0; this.w = 3; this.pending = null;
+    this.startRow();
+  }
+  startRow() {
+    this.w = Math.min(this.w, towerMaxW(this.row));
+    this.dir = Math.random() < 0.5 ? 1 : -1;
+    this.pos = this.dir > 0 ? 0 : TOWER.COLS - this.w;
+    this.stepT = 0;
+    this.setState('ready1', `① で止めよう（${this.row + 1}段目 / ${TOWER.ROWS}段）`);
+  }
+  idleHint() { return this.credits > 0 ? `① を押すとスタート（のこり ${this.credits} 回）` : '100円を入れてね'; }
+  isWin(b) { return b.position.y < -0.14; }
+  aimOrigin() { return new THREE.Vector3(0, 0, 0); }
+  aimTargets() { return []; }
+  step(h) {
+    const T = TOWER, n = this.pending; this.pending = null;
+    switch (this.state) {
+      case 'ready1': {
+        this.stepT += h;
+        const iv = towerStep(this.row);
+        while (this.stepT >= iv) {
+          this.stepT -= iv;
+          if (this.pos + this.dir < 0 || this.pos + this.dir + this.w > T.COLS) this.dir = -this.dir;
+          this.pos += this.dir;
+          this.S.plink();
+        }
+        if (n === 1) this.stop();
+        break;
+      }
+      case 'stopped':
+        if (this.t > 0.35) {
+          if (this.row === T.ROWS) { this.setState('win', '大景品 GET!!'); this.release('major'); }
+          else if (this.row === T.MINOR) this.setState('choice', '小景品をもらう：②　大景品を狙って続ける：①');
+          else this.startRow();
+        }
+        break;
+      case 'choice':
+        if (n === 1) { this.S.click(); this.startRow(); }
+        else if (n === 2 || this.t > T.CHOICE_T) { this.setState('win', '小景品 GET!!'); this.release('minor'); }
+        break;
+      case 'over':
+        if (this.t > 1.6) this.finishPlay();
+        break;
+      case 'win':
+        if (this.t > 2.2) this.finishPlay();
+        break;
+    }
+    // はみ出して削れたブロックが落ちていく
+    for (const c of this.chips) { c.v -= 3 * h; c.m.position.y += c.v * h; c.life -= h; }
+    for (const c of this.chips.filter(c => c.life <= 0)) { this.group.remove(c.m); }
+    this.chips = this.chips.filter(c => c.life > 0);
+  }
+  stop() {
+    const T = TOWER, cols = [...Array(this.w)].map((_, i) => this.pos + i);
+    const below = this.row === 0 ? null : this.lit[this.row - 1];
+    const keep = below ? cols.filter(c => below.includes(c)) : cols;
+    for (const c of cols.filter(c => !keep.includes(c))) {
+      const m = mesh(this.cells[this.row][c].geometry, this.rowMats[this.row], { cast: false });
+      m.position.copy(this.cells[this.row][c].position); m.position.z += 0.01;
+      this.group.add(m); this.chips.push({ m, v: 0, life: 1.0 });
+    }
+    this.S.clank();
+    if (!keep.length) { this.lit[this.row] = []; this.setState('over', 'ずれた… ざんねん'); return; }
+    this.lit[this.row] = keep;
+    this.w = keep.length;
+    this.row++;
+    this.setState('stopped', keep.length < cols.length ? `${cols.length - keep.length}つ はみ出した！` : 'ぴったり！');
+  }
+  // 遊んでいないときは、ブロックがゆっくり流れるデモ表示
+  showIdle() { this.demoT = 0; }
+  afterStep() {}
+  sync() {
+    this.syncPrizes();
+    const T = TOWER, playing = this.state !== 'idle';
+    this.demoT = (this.demoT ?? 0) + 1 / 60;
+    for (let r = 0; r < T.ROWS; r++) for (let c = 0; c < T.COLS; c++) {
+      let on;
+      if (!playing) on = ((c + r + Math.floor(this.demoT * 4)) % 9) < 2;
+      else if (r < this.row || (this.state === 'over' && r === this.row)) on = (this.lit[r] ?? []).includes(c) && !(this.state === 'over' && Math.floor(this.t * 6) % 2);
+      else if (r === this.row && this.state === 'ready1') on = c >= this.pos && c < this.pos + this.w;
+      else on = false;
+      if (this.state === 'win' && r < this.row) on = Math.floor(this.t * 8 + r) % 2 === 0;
+      this.cells[r][c].material = on ? this.rowMats[r] : this.offMat;
+    }
+  }
+  lightButtons(elapsed) {
+    const blink = 0.6 + 0.4 * Math.sin(elapsed * 9), [o1, o2] = this.buttonsOn();
+    const l1 = o1 ? blink * 1.4 : 0.03, l2 = o2 ? blink * 1.4 : 0.03;
+    this.shell.btn1.capMat.emissiveIntensity = l1; this.shell.btn1.sideMat.emissiveIntensity = l1 * 0.6;
+    this.shell.btn2.capMat.emissiveIntensity = l2; this.shell.btn2.sideMat.emissiveIntensity = l2 * 0.6;
+  }
+  motorLevel() { return [0, 1]; }
+}
+
+// ============================================================
 // 店内の配置
 // ============================================================
 // 手前の列（奥を向く）→ 奥の列（手前を向く）の順に並べる。横スワイプはこの順に切り替わる
@@ -4208,6 +4415,7 @@ const vegMachine = new RingHookMachine(2.5, { kind: 'veg' });
 new RingHookMachine(3.75, { kind: 'snack' });
 new ClawMachine(5.0, 'turntable');
 new CutMachine(6.25);
+new TowerMachine(7.5);
 new KeyMachine(6.25, ROW_B);
 new ClawMachine(5.0, 'maeotoshi', ROW_B);
 new RingHookMachine(3.75, { kind: 'drink', ...ROW_B });
