@@ -806,7 +806,7 @@ const noSfx = new Proxy({}, { get: () => () => {} });
 // ============================================================
 // 店内
 // ============================================================
-const ROOM = { x0: -4.5, x1: 5.85, z0: -1.1, z1: 4.0 };
+const ROOM = { x0: -4.5, x1: 7.1, z0: -1.1, z1: 4.0 };
 const obstacles = [];   // 歩行時の当たり判定（XZ平面の矩形）
 function addObstacle(x0, x1, z0, z1) { obstacles.push({ x0, x1, z0, z1 }); }
 {
@@ -827,7 +827,7 @@ function addObstacle(x0, x1, z0, z1) { obstacles.push({ x0, x1, z0, z1 }); }
   ceil.rotation.x = Math.PI / 2; ceil.position.set(cx, ROOM_FLOOR + wallH, cz);
   scene.add(ceil);
   const panelMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(0xfff2e0).multiplyScalar(4) });
-  for (const x of [-3.8, -2.2, -0.6, 1.0, 2.6, 4.0, 5.4]) for (const z of [0.9, 2.5]) {
+  for (const x of [-3.8, -2.2, -0.6, 1.0, 2.6, 4.0, 5.4, 6.6]) for (const z of [0.9, 2.5]) {
     const p = new THREE.Mesh(new THREE.PlaneGeometry(0.9, 0.25), panelMat);
     p.rotation.x = Math.PI / 2; p.position.set(x, ROOM_FLOOR + wallH - 0.01, z);
     scene.add(p);
@@ -3761,6 +3761,439 @@ class RingHookMachine extends Machine {
 }
 
 // ============================================================
+// ひも切り台（カットタイプ）
+// ============================================================
+// 景品が上の棒からひもで吊られている。① を押している間ハサミが右へ動き、② でハサミを前へ出してひもを切る。
+// ひもが刃のあいだ（±CUT.TOL）に入っていれば切れて、景品が下へ落ちて GET。制限時間を過ぎるとその場で切る
+const CUT = { TOP: 0.93, Y: 0.8, Z: 0.0, RAIL_Z: 0.16, TOL: 0.005, SPEED: 0.06, TIME: 20, XS: [-0.3, -0.18, -0.06, 0.06, 0.18, 0.3] };
+// 2点を結ぶ細い円柱（ひも・棒）を置く
+function placeSegment(m, A, B) {
+  const d = B.clone().sub(A), L = d.length();
+  m.position.copy(A).addScaledVector(d, 0.5);
+  m.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), d.divideScalar(Math.max(L, 1e-6)));
+  m.scale.set(1, Math.max(L, 1e-4), 1);
+}
+const stringGeo = new THREE.CylinderGeometry(0.0012, 0.0012, 1, 6);
+const stringMat = new THREE.MeshStandardMaterial({ color: 0xfff6e6, roughness: 0.8 });
+class CutMachine extends Machine {
+  constructor(x, opt = {}) {
+    super({
+      name: 'ひも切りチャレンジ', short: 'ひも切り', x, z: opt.z ?? 0, rotY: opt.rotY ?? 0,
+      home: { x: -0.4, z: CUT.RAIL_Z }, range: { xMax: 0.4, zMin: CUT.RAIL_Z }, speed: CUT.SPEED,
+      views: { front: [[0, 0.97, 1.2], [0, 0.7, 0.02]], side: [[0.6, 0.9, 0.75], [0, 0.66, 0]], top: [[0, 1.3, 0.7], [0, 0.6, 0]] },
+      shell: {
+        base: 'pit', body: 0x2b2b33, trim: 0xffd43b, signSide: 0x1c1c22, interactive: true, lights: true, glow: 0xffe066, hue: 0.14,
+        signTex: signTexture('CUT & GET', '★ ひも切りチャレンジ ★', '#ffd43b', '#ff922b', '#f03e3e'),
+        backdrop: makePegBackdrop('ひもを切ってGET!!', 'ハサミの刃のあいだにひもを入れよう', '#2b2b33', '#ffd43b'),
+        panel: ['#1c1c22', '#2f2f38'], panelText: '①：ハサミを右へ　②：切る　制限時間 20秒',
+      },
+    });
+    this.sideStates = [];
+    this.restockNotice = true;
+    this.spotScale = 0.35; this.spot.intensity *= this.spotScale;
+    this.arm = 0; this.open = 1; this.timeLeft = CUT.TIME;
+    this.build();
+    this.strings = CUT.XS.map(x => ({ x: x + rnd(-0.008, 0.008), prize: null }));
+    this.restock(true);
+    this.settle(2);
+    this.hint(this.idleHint());
+  }
+  build() {
+    const w = this.world, g = this.group;
+    staticBox(w, -0.48, 0.48, PIT_Y - 0.05, PIT_Y, -0.44, 0.44);
+    for (const [x0, x1, z0, z1] of [[-0.48, 0.48, 0.40, 0.44], [-0.48, 0.48, -0.44, -0.40], [0.45, 0.49, -0.44, 0.44], [-0.49, -0.45, -0.44, 0.44]]) staticBox(w, x0, x1, PIT_Y, 1.05, z0, z1);
+    // ひもを吊る上の棒と、ハサミが走るレール
+    const bar = mesh(new THREE.CylinderGeometry(0.008, 0.008, 0.88, 16), M.chrome); bar.rotation.z = Math.PI / 2; bar.position.set(0, CUT.TOP + 0.008, CUT.Z); g.add(bar);
+    for (const sx of [-1, 1]) boxMesh(sx * 0.45 - 0.012, sx * 0.45 + 0.012, CUT.TOP - 0.03, CUT.TOP + 0.03, CUT.Z - 0.02, CUT.Z + 0.02, M.paintWhite, g, { round: 0.004 });
+    boxMesh(-0.45, 0.45, CUT.Y - 0.05, CUT.Y - 0.04, CUT.RAIL_Z - 0.012, CUT.RAIL_Z + 0.012, M.brushed, g, { round: 0.003 });
+    // ハサミ（台車・前に出る腕・2枚の刃）
+    const c = this.cutter = new THREE.Group();
+    // 台車はレールの上、刃はその上に載っている（正面から刃とひもが見えるように）
+    c.add(at(mesh(new RoundedBoxGeometry(0.04, 0.026, 0.04, 2, 0.006), paint(0xf03e3e)), 0, -0.022, 0));
+    const mark = mesh(new THREE.BoxGeometry(0.0015, 0.002, 0.045), new THREE.MeshBasicMaterial({ color: 0xffffff }));
+    mark.position.set(0, -0.008, 0); c.add(mark);
+    this.armVis = new THREE.Group(); c.add(this.armVis);
+    this.armVis.add(at(mesh(new THREE.BoxGeometry(0.012, 0.01, 1), M.brushed), 0, 0, -0.5));
+    this.armRod = this.armVis.children[0];
+    this.blades = [];
+    for (const s of [-1, 1]) {
+      const pivot = new THREE.Group();
+      const blade = mesh(new THREE.BoxGeometry(0.005, 0.016, 0.05), new THREE.MeshStandardMaterial({ color: 0xe9ecef, metalness: 0.7, roughness: 0.25 }));
+      blade.position.set(-s * 0.0025, 0, -0.025); pivot.add(blade);
+      const edge = mesh(new THREE.BoxGeometry(0.0012, 0.017, 0.046), M.darkMetal); edge.position.set(-s * 0.0052, 0, -0.026); pivot.add(edge);
+      const grip = mesh(new THREE.BoxGeometry(0.008, 0.012, 0.03), paint(0xf03e3e)); grip.position.set(s * 0.006, 0, 0.015); pivot.add(grip);
+      pivot.userData.s = s;
+      this.blades.push(pivot); c.add(pivot);
+    }
+    g.add(c);
+    this.aimSurfaces = [];
+  }
+  // 1本のひもに景品を吊る（ひもの先に小さな結び目を付けて、結び目と景品の頭をつなぐ）
+  hang(s) {
+    const kinds = ['bear', 'mochi', 'cat', 'box', ...(hasKenney(KENNEY_PETS[0]) ? ['pet', 'pet'] : [])];
+    const kind = pick(kinds), sc = 0.85;
+    const body = plushBody(kind, sc);
+    const L = rnd(0.24, 0.34), tipY = CUT.TOP - L;
+    const top = { bear: 0.11, mochi: 0.05, cat: 0.04, box: 0.06, pet: 0.042 }[kind] * sc;
+    body.position.set(s.x, tipY - top, CUT.Z);
+    body.quaternion.setFromEuler(0, rnd(-0.6, 0.6), 0);
+    body.linearDamping = 0.15; body.angularDamping = 0.6;
+    const gm = PLUSH_KINDS[kind](); gm.scale.setScalar(sc);
+    const p = this.addPrize(kind, gm, body);
+    const knot = new CANNON.Body({ mass: 0.004, collisionFilterGroup: 0, collisionFilterMask: 0, linearDamping: 0.2 });
+    knot.addShape(new CANNON.Sphere(0.003)); knot.position.set(s.x, tipY, CUT.Z);
+    this.world.addBody(knot);
+    // ひもの上端（固定点）。ひもは張っている間だけ効く長さ L の拘束
+    const a = new CANNON.Body({ mass: 0, type: CANNON.Body.STATIC, collisionFilterGroup: 0, collisionFilterMask: 0 });
+    a.position.set(s.x, CUT.TOP, CUT.Z); this.world.addBody(a);
+    s.rope = new CANNON.DistanceConstraint(a, knot, L);
+    this.world.addConstraint(s.rope);
+    s.tie = new CANNON.PointToPointConstraint(knot, v3(0, 0, 0), body, v3(0, top, 0));
+    this.world.addConstraint(s.tie);
+    Object.assign(s, { prize: p, knot, anchorBody: a, L, top, cut: false, cutY: null });
+    // ひもの見た目（切れたら上下2本に分かれる）
+    s.upper = mesh(stringGeo, stringMat, { cast: false }); s.lower = mesh(stringGeo, stringMat, { cast: false }); s.lower.visible = false;
+    this.group.add(s.upper, s.lower);
+    // ほんの少し揺れている
+    body.velocity.set(rnd(-0.03, 0.03), 0, rnd(-0.02, 0.02)); knot.velocity.copy(body.velocity);
+    this.awake = 4;
+  }
+  clearString(s) {
+    if (s.rope) this.world.removeConstraint(s.rope);
+    if (s.tie) this.world.removeConstraint(s.tie);
+    if (s.knot) this.world.removeBody(s.knot);
+    if (s.anchorBody) this.world.removeBody(s.anchorBody);
+    if (s.upper) this.group.remove(s.upper, s.lower);
+    Object.assign(s, { prize: null, rope: null, tie: null, knot: null, anchorBody: null, upper: null, lower: null });
+  }
+  // 吊られている景品が3つ未満になったら、切れたひもを張り替えて景品を吊り直す
+  restock(initial = false) {
+    const hanging = this.strings.filter(s => s.prize && !s.cut).length;
+    if (!initial && hanging >= 3) return false;
+    for (const p of this.prizes.filter(q => q.won)) this.removePrize(p);
+    for (const s of this.strings) {
+      if (s.prize && !s.cut) continue;
+      if (s.prize && !s.prize.won && this.prizes.includes(s.prize)) this.removePrize(s.prize);
+      this.clearString(s);
+      s.x = CUT.XS[this.strings.indexOf(s)] + rnd(-0.008, 0.008);
+      this.hang(s);
+    }
+    return !initial;
+  }
+  // ひもの、ある高さでの位置（固定点と結び目を結ぶ直線上）
+  stringAt(s, y) {
+    const k = s.knot.position, t = (CUT.TOP - y) / Math.max(1e-6, CUT.TOP - k.y);
+    return { x: s.x + (k.x - s.x) * t, z: CUT.Z + (k.z - CUT.Z) * t };
+  }
+  beginPlay() {
+    super.beginPlay();
+    this.timeLeft = CUT.TIME; this.shownSec = -1;
+    this.hint('① を押している間、ハサミが右へ動くよ');
+  }
+  idleHint() { return this.credits > 0 ? `① を押すとスタート（のこり ${this.credits} 回）` : '100円を入れてね'; }
+  isWin(b) { return b.position.y < -0.14; }
+  aimOrigin() { return new THREE.Vector3(this.x, CUT.Y, this.z); }
+  aimTargets() { return []; }
+  // 正面カメラはハサミの真正面について行く（ひもと刃を同じ向きから見るので、ずれが分かる）
+  frameRange() {
+    if (this.state === 'idle') return { x0: -0.46, x1: 0.46, y0: 0.0, y1: 1.0, minDist: 0.9 };
+    const cx = Math.max(-0.3, Math.min(0.3, this.x));
+    return { x0: cx - 0.16, x1: cx + 0.16, y0: CUT.Y - 0.2, y1: CUT.Y + 0.14, minDist: 0.45 };
+  }
+  step(h) {
+    let tvx = 0;
+    const timed = ['ready1', 'move1', 'ready2'].includes(this.state);
+    if (timed) {
+      this.timeLeft -= h;
+      const sec = Math.ceil(Math.max(0, this.timeLeft));
+      if (sec !== this.shownSec) {
+        this.shownSec = sec;
+        const base = this.state === 'ready2' ? '② を押すと切るよ' : this.state === 'move1' ? '離すと止まるよ' : '① を押している間、ハサミが右へ動くよ';
+        this.hint(`${base}（のこり ${sec} 秒）`);
+      }
+      if (this.timeLeft <= 0) { this.setState('cut', '時間切れ！ その場で切るよ'); this.S.clank(); }
+    }
+    switch (this.state) {
+      case 'ready1': if (this.b1) { this.setState('move1'); this.shownSec = -1; } break;
+      case 'move1':
+        if (this.b1 && this.x < this.o.range.xMax) tvx = this.o.speed;
+        else { this.setState('ready2'); this.shownSec = -1; }
+        break;
+      case 'ready2': if (this.b2 && Math.abs(this.vx) < 0.002) { this.setState('cut', ''); this.S.clank(); } break;
+      case 'cut':
+        // 刃を開いたまま前（ひもの面）へ出し、閉じる
+        if (this.t < 0.5) { this.arm = Math.min(1, this.t / 0.5); this.open = 1; }
+        else if (this.t < 0.7) { this.open = Math.max(0, 1 - (this.t - 0.5) / 0.2); if (!this.judged && this.open <= 0.05) this.judge(); }
+        else if (this.t < 1.2) this.arm = Math.max(0, 1 - (this.t - 0.7) / 0.5);
+        else { this.open = 1; this.setState('watch'); }
+        break;
+      case 'watch':
+        if (this.t > 1.6) this.setState('back');
+        break;
+      case 'back': {
+        let done;
+        [tvx, , done] = this.returnHome(h);
+        if (done) this.finishPlay();
+        break;
+      }
+    }
+    if (this.state !== 'cut') this.judged = false;
+    this.moveGantry(tvx, 0, h);
+  }
+  judge() {
+    this.judged = true;
+    let best = null;
+    for (const s of this.strings) {
+      if (!s.prize || s.cut) continue;
+      const p = this.stringAt(s, CUT.Y), d = Math.abs(p.x - this.x);
+      if (!best || d < best.d) best = { s, d };
+    }
+    if (best && best.d <= CUT.TOL) {
+      const s = best.s;
+      s.cut = true; s.cutY = CUT.Y;
+      this.world.removeConstraint(s.rope);
+      s.prize.body.wakeUp();
+      this.S.plink(); this.S.clank();
+      this.hint('チョキン！');
+    } else if (best) {
+      this.S.clank();
+      this.hint(best.d < 0.03 ? `おしい！ ひもまで あと ${Math.round((best.d - CUT.TOL) * 1000)}mm` : 'ひもに届かなかった…');
+    }
+  }
+  afterStep() {}
+  sync() {
+    this.syncPrizes();
+    // 刃の根元は、前に出しきるとひもの 2cm 手前に来る（ひもは刃の中ほどではさまれる）
+    const c = this.cutter, bladeZ = -0.04 - (CUT.RAIL_Z - 0.06 - CUT.Z) * this.arm;
+    c.position.set(this.x, CUT.Y, CUT.RAIL_Z);
+    this.armRod.scale.z = -bladeZ; this.armRod.position.z = bladeZ / 2;
+    // 開いた刃のすき間は、ひもの位置でちょうど ±CUT.TOL
+    for (const b of this.blades) { b.position.set(0, 0, bladeZ); b.rotation.y = b.userData.s * Math.asin(CUT.TOL / 0.02) * this.open; }
+    for (const s of this.strings) {
+      if (!s.upper) continue;
+      const A = new THREE.Vector3(s.x, CUT.TOP, CUT.Z), k = s.knot.position, K = new THREE.Vector3(k.x, k.y, k.z);
+      if (!s.cut) { placeSegment(s.upper, A, K); s.lower.visible = false; continue; }
+      // 切れたあと: 上の切れ端は真下に垂れ、下の切れ端は景品と一緒に落ちる
+      const up = CUT.TOP - s.cutY;
+      placeSegment(s.upper, A, new THREE.Vector3(s.x, CUT.TOP - up, CUT.Z));
+      const pb = s.prize.body, head = pb.pointToWorldFrame(v3(0, s.top, 0)), q = pb.quaternion;
+      const dir = new THREE.Vector3(0, 1, 0).applyQuaternion(new THREE.Quaternion(q.x, q.y, q.z, q.w));
+      const H0 = new THREE.Vector3(head.x, head.y, head.z);
+      placeSegment(s.lower, H0, H0.clone().addScaledVector(dir, Math.max(0.01, s.L - up)));
+      s.lower.visible = true;
+    }
+  }
+  motorLevel() { return [Math.min(1, Math.abs(this.vx) / 0.03), 1.2]; }
+}
+
+// ============================================================
+// カギあけチャレンジ（キーマスター型の鍵穴差し込み）
+// ============================================================
+// 景品ごとの扉の下に鍵穴がある。① を押している間カギが右へ動き、② を押している間カギが奥へ進んで鍵穴に差し込まれる。
+// 鍵穴の真正面（±KEY.TOL）なら奥まで入り、根元まで押し込むと「カチッ」と回って扉が開き、景品が落ちる。
+// 少しずれていると途中で引っかかって浅くしか入らず、②を早く離しても浅いまま。どちらもカチッとは言わない
+const KEY = { Y: 0.2, PLATE_Z: -0.06, HOME_Z: 0.14, DEPTH: 0.032, TOL: 0.0022, JAM: 0.005, SPEED: 0.045, PUSH: 0.05, TIME: 25, XS: [-0.32, -0.16, 0, 0.16, 0.32] };
+const KEY_PRIZES = [
+  { title: 'GAME BOX', sub: '据え置きゲーム機', bg: '#1c1c1c', fg: '#fcc419', band: '#e03131', size: [0.13, 0.09, 0.06] },
+  { title: 'ヘッドホン', sub: 'ワイヤレス', bg: '#e9ecef', fg: '#1c1c1c', band: '#4dabf7', size: [0.1, 0.11, 0.06] },
+  { title: 'スマート時計', sub: '', bg: '#5f3dc4', fg: '#fff', size: [0.08, 0.08, 0.05] },
+  { title: 'イヤホン', sub: 'ノイズキャンセル', bg: '#0b7285', fg: '#fff', size: [0.08, 0.07, 0.04] },
+  { title: 'タブレット', sub: '10インチ', bg: '#212529', fg: '#fff', band: '#74c0fc', size: [0.13, 0.1, 0.03] },
+  { title: '携帯ゲーム機', sub: '', bg: '#c92a2a', fg: '#fff', size: [0.12, 0.07, 0.04] },
+  { title: 'Bluetooth\nスピーカー', sub: '', bg: '#2b8a3e', fg: '#fff', size: [0.08, 0.1, 0.08] },
+];
+class KeyMachine extends Machine {
+  constructor(x, opt = {}) {
+    super({
+      name: 'カギあけチャレンジ', short: 'カギあけ', x, z: opt.z ?? 0, rotY: opt.rotY ?? 0,
+      home: { x: -0.4, z: KEY.HOME_Z }, range: { xMax: 0.4, zMin: KEY.HOME_Z }, speed: KEY.SPEED,
+      views: { front: [[0, 0.42, 1.25], [0, 0.32, 0]], side: [[0.55, 0.4, 0.6], [0, 0.25, -0.05]], top: [[0, 1.1, 0.7], [0, 0.25, 0]] },
+      shell: {
+        base: 'pit', body: 0x1b1f3b, trim: 0x74c0fc, signSide: 0x101326, interactive: true, lights: true, glow: 0x74c0fc, hue: 0.58,
+        signTex: signTexture('KEY CHALLENGE', '★ カギあけチャレンジ ★', '#74c0fc', '#fcc419', '#4263eb'),
+        backdrop: makePegBackdrop('カギをあけてGET!!', '鍵穴の真正面で、奥まで差し込もう', '#1b1f3b', '#fcc419'),
+        panel: ['#101326', '#1b1f3b'], panelText: '①：カギを右へ　②：押している間 差し込む　制限時間 25秒',
+      },
+    });
+    this.sideStates = [];
+    this.restockNotice = true;
+    this.spotScale = 0.55; this.spot.intensity *= this.spotScale;
+    this.depth = 0; this.turn = 0; this.timeLeft = KEY.TIME;
+    this.build();
+    this.slots = KEY.XS.map((x, i) => ({ x, i, prize: null, floor: null, door: null, open: 0 }));
+    this.restock(true);
+    this.settle(1);
+    this.hint(this.idleHint());
+  }
+  build() {
+    const w = this.world, g = this.group;
+    staticBox(w, -0.48, 0.48, PIT_Y - 0.05, PIT_Y, -0.44, 0.44);
+    for (const [x0, x1, z0, z1] of [[-0.48, 0.48, 0.40, 0.44], [-0.48, 0.48, -0.44, -0.40], [0.45, 0.49, -0.44, 0.44], [-0.49, -0.45, -0.44, 0.44]]) staticBox(w, x0, x1, PIT_Y, 1.05, z0, z1);
+    // 景品の棚（5つの部屋）。前は透明の扉、下は鍵で開く床
+    const shelfM = paint(0x2b3160), glow = new THREE.MeshStandardMaterial({ color: 0x0b0d1a, emissive: 0x4263eb, emissiveIntensity: 0.35 });
+    boxMesh(-0.42, 0.42, 0.62, 0.64, -0.38, -0.08, shelfM, g);
+    for (const x of [-0.42, -0.24, -0.08, 0.08, 0.24, 0.42]) boxMesh(x - 0.006, x + 0.006, 0.34, 0.64, -0.38, -0.08, shelfM, g);
+    boxMesh(-0.42, 0.42, 0.34, 0.64, -0.39, -0.38, glow, g);
+    // 鍵穴の板（棚の下の前面）
+    boxMesh(-0.44, 0.44, 0.08, 0.32, KEY.PLATE_Z - 0.012, KEY.PLATE_Z, paint(0x343a6e), g, { round: 0.004 });
+    this.locks = [];
+    const slotM = new THREE.MeshBasicMaterial({ color: 0x050505 });
+    KEY.XS.forEach(x => {
+      const lk = new THREE.Group(); lk.position.set(x, KEY.Y, KEY.PLATE_Z);
+      const ring = mesh(new THREE.CylinderGeometry(0.022, 0.022, 0.008, 32), M.chrome); ring.rotation.x = Math.PI / 2; ring.position.z = 0.003; lk.add(ring);
+      const core = new THREE.Group(); core.position.z = 0.0075; lk.add(core);
+      core.add(mesh(new THREE.CylinderGeometry(0.014, 0.014, 0.002, 32), paint(0xd4a017)).rotateX(Math.PI / 2));
+      const slot = new THREE.Mesh(new THREE.PlaneGeometry(0.0034, 0.016), slotM); slot.position.z = 0.0012; core.add(slot);
+      const hole = new THREE.Mesh(new THREE.CircleGeometry(0.0034, 16), slotM); hole.position.set(0, 0.006, 0.0012); core.add(hole);
+      const lamp = new THREE.Mesh(new THREE.CircleGeometry(0.006, 16), new THREE.MeshBasicMaterial({ color: 0x552222 })); lamp.position.set(0, 0.04, 0.001); lk.add(lamp);
+      g.add(lk);
+      this.locks.push({ core, lamp });
+    });
+    // カギ（台車・軸・持ち手・ギザギザの刃）
+    const k = this.keyVis = new THREE.Group();
+    const brass = new THREE.MeshStandardMaterial({ color: 0xd4a017, metalness: 0.85, roughness: 0.3 });
+    k.add(at(mesh(new THREE.TorusGeometry(0.016, 0.005, 12, 28), brass), 0, 0, 0.03));
+    k.children[0].rotation.y = Math.PI / 2;
+    k.add(at(mesh(new THREE.BoxGeometry(0.003, 0.008, 0.05), brass), 0, 0, -0.01));
+    for (let i = 0; i < 5; i++) k.add(at(mesh(new THREE.BoxGeometry(0.003, 0.004 + (i % 3) * 0.002, 0.005), brass), 0, -0.005 - (i % 3) * 0.001, -0.03 + i * 0.008));
+    this.keyCarriage = new THREE.Group();
+    this.keyCarriage.add(mesh(new RoundedBoxGeometry(0.05, 0.04, 0.04, 2, 0.006), paint(0x4263eb)));
+    const mark = mesh(new THREE.BoxGeometry(0.0015, 0.002, 0.045), new THREE.MeshBasicMaterial({ color: 0xffffff })); mark.position.y = 0.021; this.keyCarriage.add(mark);
+    g.add(this.keyCarriage, k);
+    boxMesh(-0.45, 0.45, KEY.Y - 0.032, KEY.Y - 0.022, KEY.HOME_Z + 0.06, KEY.HOME_Z + 0.09, M.brushed, g, { round: 0.003 });
+    this.aimSurfaces = [];
+  }
+  // 部屋に景品を置く（床は物理の板。鍵が開くと消えて、景品は下へ落ちる）
+  fill(sl) {
+    const d = pick(KEY_PRIZES), [w, h, dd] = d.size;
+    const b = new CANNON.Body({ mass: 0.4, material: PM.box, collisionFilterGroup: G_PRIZE, collisionFilterMask: G_STATIC | G_PRIZE, linearDamping: 0.05, angularDamping: 0.3 });
+    b.addShape(new CANNON.Box(v3(w / 2, h / 2, dd / 2)));
+    b.position.set(sl.x, 0.35 + h / 2 + 0.001, -0.24);
+    this.addPrize('keyprize', packMesh('key-' + d.title, w, h, dd, { bg: d.bg, title: d.title.replace('\n', ''), sub: d.sub, fg: d.fg, band: d.band ?? null }), b);
+    sl.prize = this.prizes.at(-1);
+    sl.floor = staticBox(this.world, sl.x - 0.075, sl.x + 0.075, 0.33, 0.35, -0.38, -0.09);
+    if (!sl.floorVis) { sl.floorVis = boxMesh(sl.x - 0.075, sl.x + 0.075, 0.33, 0.35, -0.38, -0.09, paint(0x3b4280), this.group); sl.floorVis.userData.y0 = sl.floorVis.position.y; }
+    sl.floorVis.visible = true; sl.open = 0;
+    this.locks[sl.i].lamp.material.color.set(0x552222);
+  }
+  // 開いた部屋は、プレイが終わるたびに店員さんが新しい景品を入れて鍵をかけ直す
+  restock(initial = false) {
+    if (!initial && !this.slots.some(s => s.open || !s.prize)) return false;
+    for (const p of this.prizes.filter(q => q.won)) this.removePrize(p);
+    for (const s of this.slots) {
+      if (s.prize && !s.prize.won && !s.open) continue;
+      if (s.prize && this.prizes.includes(s.prize)) this.removePrize(s.prize);
+      if (s.floor) { this.world.removeBody(s.floor); s.floor = null; }
+      this.fill(s);
+    }
+    this.awake = 4;
+    return !initial;
+  }
+  beginPlay() { super.beginPlay(); this.timeLeft = KEY.TIME; this.shownSec = -1; this.depth = 0; this.turn = 0; this.hint('① を押している間、カギが右へ動くよ'); }
+  idleHint() { return this.credits > 0 ? `① を押すとスタート（のこり ${this.credits} 回）` : '100円を入れてね'; }
+  isWin(b) { return b.position.y < -0.14; }
+  aimOrigin() { return new THREE.Vector3(this.x, KEY.Y, this.z); }
+  aimTargets() { return []; }
+  frameRange() {
+    if (this.state === 'idle') return { x0: -0.46, x1: 0.46, y0: -0.05, y1: 0.68, minDist: 0.9 };
+    const cx = Math.max(-0.32, Math.min(0.32, this.x));
+    return { x0: cx - 0.14, x1: cx + 0.14, y0: KEY.Y - 0.1, y1: KEY.Y + 0.12, minDist: 0.4 };
+  }
+  // いまのカギの位置で、いちばん近い鍵穴とのずれ
+  nearest() {
+    let best = null;
+    for (const s of this.slots) { const d = Math.abs(s.x - this.x); if (!best || d < best.d) best = { s, d }; }
+    return best;
+  }
+  // ずれに応じて、差し込める深さ（KEY.DEPTH まで入れば回る）
+  maxDepth(d) {
+    if (d <= KEY.TOL) return KEY.DEPTH;
+    if (d <= KEY.JAM) return KEY.DEPTH * 0.65 * (1 - (d - KEY.TOL) / (KEY.JAM - KEY.TOL)) + 0.002;   // ふちに引っかかって途中で止まる
+    return 0;
+  }
+  step(h) {
+    let tvx = 0;
+    if (['ready1', 'move1', 'ready2', 'move2'].includes(this.state)) {
+      this.timeLeft -= h;
+      const sec = Math.ceil(Math.max(0, this.timeLeft));
+      if (sec !== this.shownSec) {
+        this.shownSec = sec;
+        const base = { ready1: '① を押している間、カギが右へ動くよ', move1: '離すと止まるよ', ready2: '② を押している間、カギを差し込むよ', move2: '奥まで押し込もう' }[this.state];
+        this.hint(`${base}（のこり ${sec} 秒）`);
+      }
+      if (this.timeLeft <= 0) { this.hint('時間切れ！'); this.setState('judge'); }
+    }
+    const gap = KEY.HOME_Z - 0.035 - (KEY.PLATE_Z + 0.008);   // カギの先から鍵穴の面まで
+    switch (this.state) {
+      case 'ready1': if (this.b1) { this.setState('move1'); this.shownSec = -1; } break;
+      case 'move1':
+        if (this.b1 && this.x < this.o.range.xMax) tvx = this.o.speed;
+        else { this.setState('ready2'); this.shownSec = -1; }
+        break;
+      case 'ready2': if (this.b2 && Math.abs(this.vx) < 0.002) { this.setState('move2'); this.shownSec = -1; } break;
+      case 'move2': {
+        const n = this.nearest(), lim = gap + this.maxDepth(n.d);
+        if (this.b2) {
+          const before = this.depth;
+          this.depth = Math.min(lim, this.depth + KEY.PUSH * h);
+          if (before < gap && this.depth >= gap) this.S.clank();   // 板か鍵穴に当たった
+          if (this.depth >= gap + KEY.DEPTH - 1e-6) { this.setState('click', 'カチッ！'); this.unlock(n.s); }
+        } else this.setState('judge');
+        break;
+      }
+      case 'click':
+        this.turn = Math.min(1, this.t / 0.35);
+        if (this.t > 1.8) this.setState('retract');
+        break;
+      case 'judge': {
+        if (this.t < 0.01) {
+          const n = this.nearest(), inn = this.depth - gap;
+          if (inn <= 0) this.hint(n.d < 0.02 ? `鍵穴に入らなかった… あと ${Math.max(1, Math.round((n.d - KEY.TOL) * 1000))}mm` : '鍵穴に入らなかった…');
+          else if (this.maxDepth(n.d) < KEY.DEPTH) this.hint('ずれて途中で引っかかった… 浅い！');
+          else this.hint('押し込みが浅い！ 奥までカチッと入れよう');
+          this.S.clank();
+        }
+        if (this.t > 1.2) this.setState('retract');
+        break;
+      }
+      case 'retract':
+        this.turn = Math.max(0, this.turn - h * 3);
+        this.depth = Math.max(0, this.depth - 0.12 * h);
+        if (this.depth <= 0 && this.turn <= 0) this.setState('back');
+        break;
+      case 'back': {
+        let done;
+        [tvx, , done] = this.returnHome(h);
+        if (done && this.t > 1.0) this.finishPlay();
+        break;
+      }
+    }
+    // 開いた部屋の床はゆっくり下へ倒れる（見た目）
+    for (const s of this.slots) if (s.open > 0 && s.open < 1) s.open = Math.min(1, s.open + h * 2.5);
+    this.moveGantry(tvx, 0, h);
+  }
+  unlock(s) {
+    this.S.plink();
+    this.locks[s.i].lamp.material.color.set(0x40ff70);
+    s.open = 0.01;
+    if (s.floor) { this.world.removeBody(s.floor); s.floor = null; }
+    s.prize.body.wakeUp();
+    this.awake = 4;
+  }
+  afterStep() {}
+  sync() {
+    this.syncPrizes();
+    this.keyCarriage.position.set(this.x, KEY.Y, KEY.HOME_Z + 0.075);
+    this.keyVis.position.set(this.x, KEY.Y, KEY.HOME_Z - this.depth);
+    this.keyVis.rotation.z = this.turn * Math.PI / 2;
+    const n = this.state === 'click' || this.state === 'retract' ? this.nearest() : null;
+    this.locks.forEach((l, i) => { l.core.rotation.z = n && n.s.i === i ? this.turn * Math.PI / 2 : 0; });
+    for (const s of this.slots) if (s.floorVis) { s.floorVis.visible = s.open < 1; s.floorVis.position.y = s.floorVis.userData.y0 - s.open * 0.05; }
+  }
+  motorLevel() { return [Math.max(Math.min(1, Math.abs(this.vx) / 0.03), this.state === 'move2' && this.b2 ? 0.6 : 0), 1.3]; }
+}
+
+// ============================================================
 // 店内の配置
 // ============================================================
 // 手前の列（奥を向く）→ 奥の列（手前を向く）の順に並べる。横スワイプはこの順に切り替わる
@@ -3774,6 +4207,8 @@ const ringMachine = new RingHookMachine(1.25);
 const vegMachine = new RingHookMachine(2.5, { kind: 'veg' });
 new RingHookMachine(3.75, { kind: 'snack' });
 new ClawMachine(5.0, 'turntable');
+new CutMachine(6.25);
+new KeyMachine(6.25, ROW_B);
 new ClawMachine(5.0, 'maeotoshi', ROW_B);
 new RingHookMachine(3.75, { kind: 'drink', ...ROW_B });
 new ClawMachine(2.5, 'dring', ROW_B);
@@ -3784,7 +4219,8 @@ new ClawMachine(-2.5, 'bigplush', ROW_B);
 new ClawMachine(-3.75, 'chabudai', ROW_B);
 
 // 影を落とすスポットライトは1つだけ。遊んでいる台（歩いているときは一番近い台）の照明と入れ替える
-const shadowSpot = new THREE.SpotLight(0xfff3e6, 4.6, 2.6, 1.15, 0.8, 2);
+const SPOT_I = 4.6;
+const shadowSpot = new THREE.SpotLight(0xfff3e6, SPOT_I, 2.6, 1.15, 0.8, 2);
 shadowSpot.castShadow = true; shadowSpot.shadow.mapSize.set(1024, 1024);
 shadowSpot.shadow.camera.near = 0.1; shadowSpot.shadow.camera.far = 1.8;
 shadowSpot.shadow.bias = -0.0004; shadowSpot.shadow.normalBias = 0.004; shadowSpot.shadow.radius = 4;
@@ -3800,7 +4236,9 @@ function updateShadowSpot() {
     }
   }
   if (!m || m === shadowOwner || !m.spot) return;
-  if (shadowOwner) shadowOwner.spot.intensity = shadowSpot.intensity;
+  // 景品が照明の近く（高い所）にある台は暗めにする（spotScale）
+  if (shadowOwner) shadowOwner.spot.intensity = SPOT_I * (shadowOwner.spotScale ?? 1);
+  shadowSpot.intensity = SPOT_I * (m.spotScale ?? 1);
   m.spot.intensity = 0;
   m.spot.getWorldPosition(shadowSpot.position);
   m.spot.target.getWorldPosition(shadowSpot.target.position);
